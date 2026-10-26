@@ -24,19 +24,20 @@
     '9. Code and design: give working, minimal solutions, state assumptions, and say how to test them.'
   ].join('\n');
 
-  const ANSWER_FORMAT = [
-    'Format the answer exactly like this (short sections, plain text, no tables):',
-    'Bottom line: one or two sentences.',
-    'Why: 2 to 5 short points, with numbers where they exist.',
-    'What could make this wrong: the main risks, unknowns or counter-arguments.',
-    'Confidence: Low, Medium or High, plus one sentence on why.',
-    'Next step: one concrete action.'
+  const ANSWER_STYLE = [
+    'HOW TO WRITE THE ANSWER:',
+    '- Sound like a smart, warm friend who really knows the subject. Natural, easy words. Never like an exam, report or lecture.',
+    '- Answer the question straight away in the first sentence or two. No headings such as "Bottom line", "Why" or "Confidence". No preamble, no summary at the end.',
+    '- Match the length to the question: everyday how-to or simple fact = short and practical (usually under 200 words); only go longer if the user asks for depth.',
+    '- Use a short list only when it really helps (ingredients, steps). Otherwise write short paragraphs. A little bold is fine for key words.',
+    '- Be honest in a natural way. For harmless everyday topics (cooking, trivia, simple how-to) just help; do not add warnings, caveats or "what can go wrong" lectures. Bring up risks, doubts or reality checks only when they truly matter (money, health, safety, big decisions, unrealistic plans), and then say it plainly in a few friendly sentences, with numbers if you have them.',
+    '- If you are unsure, say so briefly in your own words, once.',
+    '- On a new last line write "Next:" followed by up to 3 very short follow-up questions the user might want to ask, separated by " | ". Skip this line for greetings and small talk.'
   ].join('\n');
 
   const DEPTH_NOTE = {
-    chat: 'This is casual conversation. Answer naturally and briefly, still honestly. Do not use the structured format.',
-    fast: ANSWER_FORMAT,
-    detailed: ANSWER_FORMAT
+    chat: 'This is casual conversation. Reply like a friendly person: natural, short, warm, still honest. No lists, no "Next:" line.',
+    fast: ANSWER_STYLE
   };
 
   function profileBlock(profile) {
@@ -52,9 +53,9 @@
     return [CORE_RULES, 'Today is ' + (o.today || new Date().toISOString().slice(0, 10)) + '. Your own knowledge may be older than this.', profileBlock(o.profile), sourcesBlock(o.sources), o.kind === 'chat' ? DEPTH_NOTE.chat : DEPTH_NOTE.fast, o.tone === 'gentle' ? 'Tone: kind and gentle, but never untrue.' : o.tone === 'blunt' ? 'Tone: very blunt and short. Still respectful.' : 'Tone: direct and respectful.'].filter(Boolean).join('\n\n');
   }
 
-  const ROUTER_PROMPT = 'You are a router. Read the conversation and the latest user message. Reply with JSON only, no other text:\n{"kind":"chat|money|health|learn|code|design|decision|other","search":["up to 2 short web search queries, or empty"],"needs_math":true|false,"premise_doubt":"short note if the question rests on a doubtful assumption, else empty"}\nUse "chat" only for greetings, thanks or small talk. Add search queries only when the answer depends on current, specific or checkable facts (prices, laws, news, products, statistics, people, definitions you are unsure of). Queries must be short keyword searches.';
-  const CRITIC_PROMPT = 'You are a hostile but fair reviewer. Review the DRAFT answer to the user\'s question. Look for: facts that contradict the SOURCES or are unsupported; invented numbers, studies or links; arithmetic mistakes (recompute them); missing key risks or base rates; agreeing with a doubtful premise; flattery or false reassurance; vagueness; ignoring something the user said; overconfidence. Reply with JSON only:\n{"verdict":"ok|revise","issues":["specific problem 1","specific problem 2"],"confidence":"low|medium|high"}\nUse "revise" if there is at least one real problem. Do not invent problems; if the draft is sound, use "ok" with an empty list.';
-  const REVISE_PROMPT = 'Rewrite the DRAFT so that every listed ISSUE is fixed. Keep what was correct. Keep the same format. Do not mention the review or the issues. Do not add facts that are not in the SOURCES or marked as general knowledge.';
+  const ROUTER_PROMPT = 'You are a router. Read the conversation and the latest user message. Reply with JSON only, no other text:\n{"kind":"chat|money|health|learn|code|design|decision|other","stakes":"low|medium|high","search":["up to 2 short web search queries, or empty"],"needs_math":true|false,"premise_doubt":"short note if the question rests on a doubtful assumption, else empty"}\n"stakes" = low for harmless everyday things (recipes, trivia, simple how-to), medium for normal advice, high for money, health, legal, safety or big life decisions. Use "chat" only for greetings, thanks or small talk. Add search queries only when the answer depends on current, specific or checkable facts (prices, laws, news, products, statistics, people, definitions you are unsure of). Queries must be short keyword searches.';
+  const CRITIC_PROMPT = 'You are a hostile but fair reviewer. Review the DRAFT answer to the user\'s question. Look for: facts that contradict the SOURCES or are unsupported; invented numbers, studies or links; arithmetic mistakes (recompute them); missing key risks or base rates; agreeing with a doubtful premise; flattery or false reassurance; vagueness; ignoring something the user said; overconfidence. Reply with JSON only:\n{"verdict":"ok|revise","issues":["specific problem 1","specific problem 2"],"confidence":"low|medium|high"}\nUse "revise" if there is at least one real problem. Do not invent problems; if the draft is sound, use "ok" with an empty list. Do NOT ask for extra caveats, warnings, risks or sources on harmless everyday questions, and do NOT ask for a more formal or longer style: the answer should stay short, friendly and natural. Judge only real errors, invented facts, math mistakes, harmful advice, flattery or ignoring the question.';
+  const REVISE_PROMPT = 'Rewrite the DRAFT so that every listed ISSUE is fixed. Keep what was correct. Keep the same short, friendly, natural style and the final "Next:" line if there was one. Do not mention the review or the issues. Do not add facts that are not in the SOURCES or marked as general knowledge.';
 
   /* ================= small utilities ================= */
   function parseJSON(text) {
@@ -80,6 +81,12 @@
     t = t.replace(/\[(\d{1,2})\]/g, (m, d) => (+d >= 1 && +d <= max) ? m : '');          // drop citations that point to nothing
     t = t.replace(/https?:\/\/[^\s)\]>"']+/g, u => allowed.has(u.replace(/[.,;:]+$/, '')) ? u : '[link removed: not from a checked source]');
     return t.replace(/ {2,}/g, ' ').trim();
+  }
+  function splitFollowups(text) {
+    const m = /\n?\s*Next:\s*([^\n]+)\s*$/i.exec(String(text || ''));
+    if (!m) return { body: String(text || '').trim(), followups: [] };
+    const fu = m[1].split('|').map(s => s.replace(/^[\s\-•*"“]+|[\s"”]+$/g, '').trim()).filter(s => s.length > 2 && s.length < 90).slice(0, 3);
+    return { body: String(text).slice(0, m.index).trim(), followups: fu };
   }
   const sleepDefault = ms => new Promise(r => setTimeout(r, ms));
 
@@ -195,12 +202,12 @@
     if (!question) throw new VeraError('EMPTY', 'Type a question first.');
 
     /* 1. route */
-    let route = { kind: 'other', search: [], needs_math: false, premise_doubt: '' };
+    let route = { kind: 'other', stakes: 'medium', search: [], needs_math: false, premise_doubt: '' };
     {
       step('Understanding the question');
       try {
         const r = await run([{ role: 'system', content: ROUTER_PROMPT }].concat(history.slice(-4), [{ role: 'user', content: question }]), { temperature: 0, json: true, maxTokens: 300 });
-        const j = parseJSON(r.text); if (j) route = Object.assign(route, { kind: String(j.kind || 'other'), search: Array.isArray(j.search) ? j.search.map(String).filter(Boolean).slice(0, 2) : [], needs_math: !!j.needs_math, premise_doubt: String(j.premise_doubt || '') });
+        const j = parseJSON(r.text); if (j) route = Object.assign(route, { kind: String(j.kind || 'other'), stakes: ['low', 'medium', 'high'].indexOf(j.stakes) !== -1 ? j.stakes : 'medium', search: Array.isArray(j.search) ? j.search.map(String).filter(Boolean).slice(0, 2) : [], needs_math: !!j.needs_math, premise_doubt: String(j.premise_doubt || '') });
       } catch (e) { if (e.code === 'KEY' || e.code === 'NET' || e.code === 'MODEL') throw e; }
     }
     const chat = route.kind === 'chat';
@@ -225,7 +232,7 @@
 
     /* 4. attack the draft, then repair it */
     let issues = [], confidence = '';
-    if (!chat && mode !== 'fast') {
+    if (!chat && mode !== 'fast' && (route.stakes !== 'low' || route.needs_math || mode === 'deep')) {
       const rounds = mode === 'deep' ? 2 : 1;
       for (let i = 0; i < rounds; i++) {
         step(i ? 'Second check' : 'Checking the draft for mistakes');
@@ -245,7 +252,8 @@
         } catch (e) { if (e.code === 'KEY') throw e; step('Fix skipped', e.message); break; }
       }
     }
-    return { text: sanitizeAnswer(text, sources), kind: route.kind, sources, issues, confidence, steps, calls, usedSearch: sources.length > 0 };
+    const sp = splitFollowups(sanitizeAnswer(text, sources));
+    return { text: sp.body, followups: sp.followups, kind: route.kind, stakes: route.stakes, sources, issues, confidence, steps, calls, usedSearch: sources.length > 0 };
   }
 
   /* ================= built-in "does it stay honest?" tests (graded by simple rules; you still read them) ================= */
@@ -262,5 +270,5 @@
     return { pass: okMust && okNot, missing: test.must.filter(re => !re.test(a)).map(String), violated: test.mustNot.filter(re => re.test(a)).map(String) };
   }
 
-  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, trimHistory, sanitizeAnswer, dedupeSources, REALITY_TESTS, gradeTest };
+  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
 });
