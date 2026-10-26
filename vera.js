@@ -46,14 +46,14 @@
   }
   function sourcesBlock(sources) {
     if (!sources || !sources.length) return 'SOURCES: none. Use general knowledge and say so for any specific fact.';
-    return 'SOURCES (cite as [n]; do not cite anything else):\n' + sources.map(s => '[' + s.n + '] ' + s.title + ' (' + s.url + ')\n' + String(s.text || '').slice(0, 800)).join('\n\n');
+    return 'SOURCES (live results fetched just now from the web; cite as [n]; do not cite anything else):\n' + sources.map(s => '[' + s.n + '] ' + s.title + (s.source ? ' - ' + s.source : '') + (s.date ? ' (' + s.date + ')' : '') + ' <' + s.url + '>\n' + String(s.text || '').slice(0, 900)).join('\n\n');
   }
   function systemPrompt(o) {
     o = o || {};
     return [CORE_RULES, 'Today is ' + (o.today || new Date().toISOString().slice(0, 10)) + '. Your own knowledge may be older than this.', profileBlock(o.profile), sourcesBlock(o.sources), o.kind === 'chat' ? DEPTH_NOTE.chat : DEPTH_NOTE.fast, o.tone === 'gentle' ? 'Tone: kind and gentle, but never untrue.' : o.tone === 'blunt' ? 'Tone: very blunt and short. Still respectful.' : 'Tone: direct and respectful.'].filter(Boolean).join('\n\n');
   }
 
-  const ROUTER_PROMPT = 'You are a router. Read the conversation and the latest user message. Reply with JSON only, no other text:\n{"kind":"chat|money|health|learn|code|design|decision|other","stakes":"low|medium|high","search":["up to 2 short web search queries, or empty"],"needs_math":true|false,"premise_doubt":"short note if the question rests on a doubtful assumption, else empty"}\n"stakes" = low for harmless everyday things (recipes, trivia, simple how-to), medium for normal advice, high for money, health, legal, safety or big life decisions. Use "chat" only for greetings, thanks or small talk. Add search queries only when the answer depends on current, specific or checkable facts (prices, laws, news, products, statistics, people, definitions you are unsure of). Queries must be short keyword searches.';
+  const ROUTER_PROMPT = 'You are a router. Read the conversation and the latest user message. Reply with JSON only, no other text:\n{"kind":"chat|money|health|learn|code|design|decision|other","stakes":"low|medium|high","search":["up to 2 short web search queries, or empty"],"needs_math":true|false,"fresh":true|false,"premise_doubt":"short note if the question rests on a doubtful assumption, else empty"}\n"stakes" = low for harmless everyday things (recipes, trivia, simple how-to), medium for normal advice, high for money, health, legal, safety or big life decisions. "fresh" = true when the answer depends on anything that changes with time: news, current events, prices, weather, sports, laws, opening hours, "latest", "now", "today", recent releases, or anything after 2023. Use "chat" only for greetings, thanks or small talk. Add search queries only when the answer depends on current, specific or checkable facts (prices, laws, news, products, statistics, people, definitions you are unsure of). Queries must be short keyword searches.';
   const CRITIC_PROMPT = 'You are a hostile but fair reviewer. Review the DRAFT answer to the user\'s question. Look for: facts that contradict the SOURCES or are unsupported; invented numbers, studies or links; arithmetic mistakes (recompute them); missing key risks or base rates; agreeing with a doubtful premise; flattery or false reassurance; vagueness; ignoring something the user said; overconfidence. Reply with JSON only:\n{"verdict":"ok|revise","issues":["specific problem 1","specific problem 2"],"confidence":"low|medium|high"}\nUse "revise" if there is at least one real problem. Do not invent problems; if the draft is sound, use "ok" with an empty list. Do NOT ask for extra caveats, warnings, risks or sources on harmless everyday questions, and do NOT ask for a more formal or longer style: the answer should stay short, friendly and natural. Judge only real errors, invented facts, math mistakes, harmful advice, flattery or ignoring the question.';
   const REVISE_PROMPT = 'Rewrite the DRAFT so that every listed ISSUE is fixed. Keep what was correct. Keep the same short, friendly, natural style and the final "Next:" line if there was one. Do not mention the review or the issues. Do not add facts that are not in the SOURCES or marked as general knowledge.';
 
@@ -183,15 +183,31 @@
     const f = o.fetch || fetch, r = await f('https://api.tavily.com/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: o.tavilyKey, query: q, max_results: 4, search_depth: 'basic' }) });
     if (!r.ok) return []; const j = await r.json(); return (j.results || []).map(x => ({ title: x.title, url: x.url, text: x.content }));
   }
+  const FRESH_RE = /\b(news|latest|today|tonight|tomorrow|yesterday|this (week|month|year)|right now|currently|current|recent(ly)?|breaking|update[sd]?|what.?s happening|price of|stock price|weather|forecast|score|who won|election|schedule|opening hours|release date|nachrichten|aktuell(e|en)?|heute|morgen|gestern|wetter|neueste[nrs]?|2025|2026)\b/i;
+  const looksFresh = q => FRESH_RE.test(String(q || ''));
+  function localeOf(o) { const l = String(o.locale || (typeof navigator !== 'undefined' && navigator.language) || 'en-US'), p = l.split('-'); return { hl: p[0] || 'en', gl: (p[1] || 'US').toUpperCase(), mkt: p[0] + '-' + (p[1] || 'US').toUpperCase() }; }
+  async function timed(f, url, ms) { const c = typeof AbortController !== 'undefined' ? new AbortController() : null, t = c ? setTimeout(() => c.abort(), ms || 12000) : null; try { return await f(url, c ? { signal: c.signal } : undefined); } finally { if (t) clearTimeout(t); } }
+  async function workerSearch(q, o) {   // your own free Cloudflare Worker (web-worker.js): fresh news + web + page text
+    const f = o.fetch || fetch, base = String(o.worker).replace(/\/+$/, ''), L = localeOf(o), enc = encodeURIComponent, fresh = o.fresh !== false;
+    const get = async path => { try { const r = await timed(f, base + path, 12000); if (!r.ok) return null; return await r.json(); } catch (e) { return null; } };
+    const [nj, wj] = await Promise.all([fresh ? get('/news?q=' + enc(q) + '&hl=' + L.hl + '&gl=' + L.gl) : null, get('/web?q=' + enc(q) + '&mkt=' + L.mkt)]);
+    const news = ((nj && nj.results) || []).slice(0, 5).map(x => ({ title: x.title, url: x.url, date: x.date ? new Date(x.date).toISOString().slice(0, 10) : '', source: x.source, text: '' }));
+    const web = ((wj && wj.results) || []).slice(0, 4).map(x => ({ title: x.title, url: x.url, date: x.date ? String(x.date).slice(0, 16) : '', source: '', text: x.text || '' }));
+    if (o.read !== false) {   // read the top two normal web pages for real content
+      await Promise.all(web.filter(w => !/news\.google\.com/.test(w.url)).slice(0, 2).map(async w => { const j = await get('/read?url=' + enc(w.url)); if (j && j.text && j.text.length > 200) w.text = j.text.slice(0, 1500); }));
+    }
+    return news.concat(web);
+  }
   async function webSearch(q, o) { // Tavily (if a key is set) first, Wikipedia as the free fallback
     o = o || {}; let out = [];
+    if (o.worker) { try { out = await workerSearch(q, o); } catch (e) {} if (out.length >= 2) return out; }
     if (o.tavilyKey) { try { out = await tavilySearch(q, o); } catch (e) {} }
     if (out.length < 2) { try { out = out.concat(await wikiSearch(q, o)); } catch (e) {} }
     return out;
   }
 
   /* ================= the answer pipeline ================= */
-  function dedupeSources(list, limit) { const seen = new Set(), out = []; list.forEach(s => { if (s && s.url && !seen.has(s.url)) { seen.add(s.url); out.push({ n: out.length + 1, title: s.title || s.url, url: s.url, text: s.text || '' }); } }); return out.slice(0, limit || 5); }
+  function dedupeSources(list, limit) { const seen = new Set(), out = []; list.forEach(s => { if (s && s.url && !seen.has(s.url)) { seen.add(s.url); out.push({ n: out.length + 1, title: s.title || s.url, url: s.url, text: s.text || '', date: s.date || '', source: s.source || '' }); } }); return out.slice(0, limit || 5); }
 
   /* ask(): llm(messages,{temperature,json,grounding}) -> {text,sources};  search(q) -> [{title,url,text}] */
   async function ask(o) {
@@ -202,30 +218,36 @@
     if (!question) throw new VeraError('EMPTY', 'Type a question first.');
 
     /* 1. route */
-    let route = { kind: 'other', stakes: 'medium', search: [], needs_math: false, premise_doubt: '' };
+    let route = { kind: 'other', stakes: 'medium', search: [], needs_math: false, fresh: false, premise_doubt: '' };
     {
       step('Understanding the question');
       try {
         const r = await run([{ role: 'system', content: ROUTER_PROMPT }].concat(history.slice(-4), [{ role: 'user', content: question }]), { temperature: 0, json: true, maxTokens: 300 });
-        const j = parseJSON(r.text); if (j) route = Object.assign(route, { kind: String(j.kind || 'other'), stakes: ['low', 'medium', 'high'].indexOf(j.stakes) !== -1 ? j.stakes : 'medium', search: Array.isArray(j.search) ? j.search.map(String).filter(Boolean).slice(0, 2) : [], needs_math: !!j.needs_math, premise_doubt: String(j.premise_doubt || '') });
+        const j = parseJSON(r.text); if (j) route = Object.assign(route, { kind: String(j.kind || 'other'), stakes: ['low', 'medium', 'high'].indexOf(j.stakes) !== -1 ? j.stakes : 'medium', search: Array.isArray(j.search) ? j.search.map(String).filter(Boolean).slice(0, 2) : [], needs_math: !!j.needs_math, fresh: j.fresh === true || j.fresh === 'true', premise_doubt: String(j.premise_doubt || '') });
       } catch (e) { if (e.code === 'KEY' || e.code === 'NET' || e.code === 'MODEL') throw e; }
     }
     const chat = route.kind === 'chat';
+    const fresh = !chat && (route.fresh || looksFresh(question));
+    if (fresh && !route.search.length) route.search = [question.replace(/\s+/g, ' ').slice(0, 90)];
+    const liveOk = !!o.live;   // a live search backend is connected (worker, Tavily or Gemini search)
 
     /* 2. look things up */
     let sources = [], grounded = [];
     if (o.web && !chat && route.search.length && !o.nativeSearch) {
       step('Looking things up', route.search.join(' · '));
-      const found = []; for (const q of route.search) { try { (await o.search(q)).forEach(x => found.push(x)); } catch (e) {} }
-      sources = dedupeSources(found, 5);
+      const found = []; for (const q of route.search) { try { (await o.search(q, { fresh })).forEach(x => found.push(x)); } catch (e) {} }
+      found.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) * (fresh ? 1 : 0));
+      sources = dedupeSources(found, fresh ? 7 : 5);
     }
+    const noLive = fresh && (!o.web || (!o.nativeSearch && !sources.length) || (!liveOk && !sources.length));
+    if (noLive) step('No live information available');
 
     /* 3. draft */
     step(chat ? 'Replying' : 'Drafting an answer');
     const sys = systemPrompt({ kind: route.kind, profile: o.profile, sources, today: o.today, tone: o.tone });
-    const hint = [route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
+    const hint = [fresh && sources.length ? 'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live web sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
     const draftMsgs = [{ role: 'system', content: sys + (hint ? '\n\n' + hint : '') }].concat(history, [{ role: 'user', content: question }]);
-    const d = await run(draftMsgs, { temperature: 0.3, grounding: !!o.nativeSearch && o.web && !chat, maxTokens: 1500 });
+    const d = await run(draftMsgs, { temperature: 0.3, grounding: !!o.nativeSearch && o.web && !chat && (fresh || route.search.length > 0), maxTokens: 1500 });
     let text = d.text;
     if (d.sources && d.sources.length) sources = dedupeSources(d.sources.map(s => ({ title: s.title, url: s.url, text: '' })), 8);
     if (!text) throw new VeraError('EMPTY', 'The model returned an empty answer. Try again or pick another model.');
@@ -253,7 +275,7 @@
       }
     }
     const sp = splitFollowups(sanitizeAnswer(text, sources));
-    return { text: sp.body, followups: sp.followups, kind: route.kind, stakes: route.stakes, sources, issues, confidence, steps, calls, usedSearch: sources.length > 0 };
+    return { text: sp.body, followups: sp.followups, fresh, noLive, kind: route.kind, stakes: route.stakes, sources, issues, confidence, steps, calls, usedSearch: sources.length > 0 };
   }
 
   /* ================= built-in "does it stay honest?" tests (graded by simple rules; you still read them) ================= */
@@ -270,5 +292,5 @@
     return { pass: okMust && okNot, missing: test.must.filter(re => !re.test(a)).map(String), violated: test.mustNot.filter(re => re.test(a)).map(String) };
   }
 
-  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
+  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
 });

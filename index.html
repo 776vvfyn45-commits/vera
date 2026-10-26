@@ -120,7 +120,7 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const KEY = 'vera_state_v1';
-const DEF = { provider: 'groq', keys: {}, models: {}, bases: {}, mode: 'careful', web: true, tone: 'direct', tavily: '', profile: '', name: 'Athira', theme: 'dark' };
+const DEF = { provider: 'groq', keys: {}, models: {}, bases: {}, mode: 'careful', web: true, tone: 'direct', tavily: '', worker: '', profile: '', name: 'Athira', theme: 'dark' };
 function load() { try { const v = JSON.parse(localStorage.getItem(KEY)); if (v && typeof v === 'object') return v; } catch (e) {} return null; }
 const S = Object.assign({ settings: Object.assign({}, DEF), convs: [], active: null }, load() || {});
 S.settings = Object.assign({}, DEF, S.settings); S.settings.keys = S.settings.keys || {}; S.settings.models = S.settings.models || {}; S.settings.bases = S.settings.bases || {};
@@ -138,6 +138,7 @@ const key = () => S.settings.keys[S.settings.provider] || '';
 const base = () => (S.settings.bases[S.settings.provider] || '').trim();
 const mkLLM = () => Vera.createLLM({ provider: S.settings.provider, key: key(), model: S.settings.models[S.settings.provider], base: base() || undefined });
 const conv = () => S.convs.find(c => c.id === S.active);
+const hasLive = () => !!(S.settings.worker || S.settings.tavily || S.settings.provider === 'gemini');
 const ready = () => (!P().needsKey || !!key()) && (!P().needsBase || !!base());
 function toast(m, ms) { const t = $('#toast'); t.textContent = m; t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => { t.style.display = 'none'; }, ms || 3000); }
 
@@ -173,9 +174,10 @@ function turnHtml(m, i, last) {
   const isTyping = typing && typing.i === i;
   let h = '<div class="turn a"><div class="av">V</div><div class="body"><div class="txt' + (isTyping ? ' caret' : '') + '" id="t' + i + '">' + md(isTyping ? typing.shown : m.content) + '</div>';
   if (!isTyping) {
+    if (x.noLive) h += '<div class="small dim" style="margin-top:8px">ℹ️ I could not check live information' + (hasLive() ? '' : ' (live search is not connected)') + ', so recent facts here may be out of date. ' + (hasLive() ? '' : '<a href="#" data-act="settings">Set up live search</a>') + '</div>';
     h += '<div class="acts"><button class="mini" data-act="copy" data-i="' + i + '">Copy</button>' + (last ? '<button class="mini" data-act="regen">↻ Redo</button>' : '') + '</div>';
     if (x.usedSearch || (x.issues && x.issues.length)) {
-      h += '<details class="how"><summary>' + (x.usedSearch ? '🔎 I checked this online' : '✓ I double-checked this') + (x.issues && x.issues.length ? ' and fixed ' + x.issues.length + ' thing' + (x.issues.length > 1 ? 's' : '') : '') + '</summary><div class="in">' +
+      h += '<details class="how"><summary>' + (x.usedSearch ? (x.fresh ? '🔎 Checked live on the web' : '🔎 I checked this online') : '✓ I double-checked this') + (x.issues && x.issues.length ? ' and fixed ' + x.issues.length + ' thing' + (x.issues.length > 1 ? 's' : '') : '') + '</summary><div class="in">' +
         (x.sources && x.sources.length ? x.sources.map(s => '<a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">[' + s.n + '] ' + esc(s.title) + '</a>').join('') : '') +
         (x.issues && x.issues.length ? '<div style="margin-top:6px">Fixed in my first draft:<br>• ' + x.issues.map(esc).join('<br>• ') + '</div>' : '') + '</div></details>';
     }
@@ -229,10 +231,10 @@ async function send(text) {
   $('#q').value = ''; autosize(); busy = true; stepText = 'Thinking…'; save(); render();
   const st = S.settings, llm = mkLLM();
   try {
-    const r = await Vera.ask({ llm, question: text, history, mode: st.mode, web: st.web, nativeSearch: st.provider === 'gemini', tone: st.tone, profile: st.profile,
-      search: q => Vera.webSearch(q, { tavilyKey: st.tavily }),
+    const r = await Vera.ask({ llm, question: text, history, mode: st.mode, web: st.web, nativeSearch: st.provider === 'gemini', live: hasLive(), tone: st.tone, profile: st.profile, locale: navigator.language,
+      search: (q, o) => Vera.webSearch(q, { tavilyKey: st.tavily, worker: st.worker, fresh: !o || o.fresh !== false, locale: navigator.language }),
       onStep: (n, d) => { stepText = /Looking/.test(n) ? 'Looking that up…' : /Check|Second|Fix/.test(n) ? 'Double-checking…' : /Draft|Reply/.test(n) ? 'Writing…' : 'Thinking…'; const e = $('#stepTxt'); if (e) e.textContent = stepText; } });
-    c.msgs.push({ role: 'assistant', content: r.text, meta: { steps: r.steps, issues: r.issues, sources: r.sources, calls: r.calls, usedSearch: r.usedSearch, followups: r.followups, kind: r.kind } });
+    c.msgs.push({ role: 'assistant', content: r.text, meta: { steps: r.steps, issues: r.issues, sources: r.sources, calls: r.calls, usedSearch: r.usedSearch, followups: r.followups, kind: r.kind, fresh: r.fresh, noLive: r.noLive } });
     typing = { i: c.msgs.length - 1, shown: '' }; busy = false; save(); render(); typeIn(c.msgs.length - 1, r.text);
   } catch (e) {
     c.msgs.push({ role: 'assistant', error: true, content: friendly(e.code, e.message) }); busy = false; save(); render();
@@ -262,6 +264,7 @@ function openSettings() {
   else h += '<div class="note">Install Ollama from <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">ollama.com</a>, run a model (for example <b>ollama pull qwen3:8b</b>), then start Ollama with <b>OLLAMA_ORIGINS=https://776vvfyn45-commits.github.io</b>. PC browser only.</div>';
   h += '<label class="l">Model</label><div class="row"><select id="sModel">' + (models.length ? models.map(m => '<option' + (st.models[st.provider] === m ? ' selected' : '') + '>' + esc(m) + '</option>').join('') : '<option value="">(tap Load list)</option>') + '</select><button class="btn" data-act="loadModels">Load list</button></div>';
   h += '<button class="btn pri block" style="margin-top:14px" data-act="saveConn">Save & test</button>';
+  h += '<h2>Live web search (real-time news)</h2><div class="dim small">Without this, Vera only knows what it learned before about 2024. Free setup in about 5 minutes: follow <b>LIVE_SEARCH_SETUP.md</b>, then paste your Worker address here.</div><label class="l">Your Worker address</label><input type="text" id="sWorker" value="' + esc(st.worker) + '" placeholder="https://vera-web.yourname.workers.dev" autocomplete="off" autocapitalize="off"><div class="row" style="margin-top:10px"><button class="btn" data-act="saveWorker">Save</button><button class="btn" data-act="testWorker">Test live search</button></div><div id="wkOut" class="small" style="margin-top:8px"></div>' + (st.provider === 'gemini' ? '<div class="dim small" style="margin-top:8px">You are using Gemini, which can also search Google on its own.</div>' : '');
   h += '<h2>You</h2><label class="l" style="margin-top:0">Your name</label><input type="text" id="sName" value="' + esc(st.name) + '" autocomplete="off"><label class="l">About you (so answers fit your life)</label><textarea id="sProf" class="sheetta" rows="4" placeholder="Example: I live in Germany. Small budget (about €100). Beginner investor. I train 4×/week. I build small web apps.">' + esc(st.profile) + '</textarea>';
   h += '<h2>Style</h2><div class="row"><div style="flex:1"><label class="l" style="margin-top:0">Tone</label><select id="sTone">' + [['gentle', 'Gentle'], ['direct', 'Direct'], ['blunt', 'Blunt and short']].map(t => '<option value="' + t[0] + '"' + (st.tone === t[0] ? ' selected' : '') + '>' + t[1] + '</option>').join('') + '</select></div><div style="flex:1"><label class="l" style="margin-top:0">Theme</label><select id="sTheme"><option value="dark"' + (st.theme !== 'light' ? ' selected' : '') + '>Dark</option><option value="light"' + (st.theme === 'light' ? ' selected' : '') + '>Light</option></select></div></div>';
   h += '<div class="dim small" style="margin-top:10px">⚡ Quick = fastest. 🧠 Smart = double-checks anything important (default). 🔬 Thorough = checks everything twice. More checking uses more of your free daily limit.</div>';
@@ -272,7 +275,7 @@ function openSettings() {
 }
 function hasFEKey() { try { const j = JSON.parse(localStorage.getItem('fe_state_v1')); return !!(j && j.gemKey); } catch (e) { return false; } }
 function readConn() { const st = S.settings; st.provider = $('#sProv').value; if ($('#sKey')) st.keys[st.provider] = $('#sKey').value.trim(); if ($('#sBase')) st.bases[st.provider] = $('#sBase').value.trim().replace(/\/+$/, ''); const m = $('#sModel').value; if (m) st.models[st.provider] = m; }
-function readAll() { const st = S.settings; readConn(); st.tone = $('#sTone').value; st.theme = $('#sTheme').value; st.tavily = $('#sTav').value.trim(); st.name = $('#sName').value.trim(); st.profile = $('#sProf').value; applyTheme(); }
+function readAll() { const st = S.settings; readConn(); st.tone = $('#sTone').value; st.theme = $('#sTheme').value; st.tavily = $('#sTav').value.trim(); if ($('#sWorker')) st.worker = $('#sWorker').value.trim().replace(/\/+$/, ''); st.name = $('#sName').value.trim(); st.profile = $('#sProf').value; applyTheme(); }
 async function runTests() {
   const out = $('#testOut'); if (!ready() || !S.settings.models[S.settings.provider]) { toast('Connect a model first.'); return; }
   const st = S.settings, llm = mkLLM(); let pass = 0, h = '';
@@ -288,7 +291,7 @@ async function runTests() {
 /* ---------- events ---------- */
 document.addEventListener('click', async e => {
   if (e.target.id === 'sheet') { closeSheet(); return; }
-  const el = e.target.closest('[data-act]'); if (!el) return; const d = el.dataset;
+  const el = e.target.closest('[data-act]'); if (!el) return; if (el.tagName === 'A') e.preventDefault(); const d = el.dataset;
   switch (d.act) {
     case 'send': send($('#q').value); break;
     case 'mic': toggleMic(); break;
@@ -309,6 +312,11 @@ document.addEventListener('click', async e => {
     case 'loadModels': { readConn(); toast('Loading models…', 8000); try { const ids = await Vera.listModels(S.settings.provider, { key: key(), base: base() || undefined }); S.settings._list = ids; S.settings._listFor = S.settings.provider; if (!S.settings.models[S.settings.provider] || ids.indexOf(S.settings.models[S.settings.provider]) === -1) S.settings.models[S.settings.provider] = Vera.pickModel(S.settings.provider, ids); save(); openSettings(); toast(ids.length + ' models found.'); } catch (er) { toast(er.message, 6000); } break; }
     case 'saveConn': { readConn(); if (P().needsKey && !key()) { toast('Paste a key first.'); break; } if (P().needsBase && !base()) { toast('Paste the base URL first.'); break; } if (!S.settings.models[S.settings.provider]) { toast('Tap "Load list" and pick a model.'); break; }
       toast('Testing…', 15000); try { const r = await mkLLM()([{ role: 'user', content: 'Reply with the single word: ready' }], { maxTokens: 60, temperature: 0 }); save(); toast(r.text ? 'Connected ✓' : 'Connected, but the model answered with nothing. Try another model.'); render(true); } catch (er) { toast(er.message, 7000); } break; }
+    case 'saveWorker': S.settings.worker = $('#sWorker').value.trim().replace(/\/+$/, ''); save(); toast(S.settings.worker ? 'Saved.' : 'Removed.'); break;
+    case 'testWorker': { const w = $('#sWorker').value.trim().replace(/\/+$/, ''); const o = $('#wkOut'); if (!/^https:\/\//.test(w)) { o.textContent = 'Paste the https:// address of your Worker first.'; break; }
+      o.textContent = 'Testing…'; try { const res = await Vera.workerSearch('Münster', { worker: w, read: false, locale: navigator.language }); S.settings.worker = w; save();
+        o.innerHTML = res.length ? '<b style="color:var(--ok)">Live search works ✓</b><br>' + res.slice(0, 4).map(r => '• ' + esc(r.title) + (r.date ? ' <span class="dim">(' + esc(r.date) + ')</span>' : '')).join('<br>') : '<b style="color:var(--bad)">The Worker answered but returned nothing.</b> Check the code was pasted fully and deployed.'; }
+      catch (er) { o.textContent = 'Could not reach the Worker: ' + er.message; } break; }
     case 'saveAll': readAll(); save(); toast('Saved.'); break;
     case 'runTests': readAll(); save(); runTests(); break;
     case 'export': { const b = new Blob([JSON.stringify(Object.assign({}, S, { settings: Object.assign({}, S.settings, { keys: {}, tavily: '' }) }))], { type: 'application/json' }), u = URL.createObjectURL(b), l = document.createElement('a'); l.href = u; l.download = 'vera-backup.json'; l.click(); setTimeout(() => URL.revokeObjectURL(u), 2000); toast('Backup saved (keys not included).'); break; }
