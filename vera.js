@@ -86,8 +86,9 @@
   /* ================= providers ================= */
   const PROVIDERS = {
     groq:       { name: 'Groq (free key)',          kind: 'openai', base: 'https://api.groq.com/openai/v1',          needsKey: true,  keyUrl: 'https://console.groq.com/keys', note: 'Fast. Strong open models. Free key, daily limits.' },
-    openrouter: { name: 'OpenRouter (free models)', kind: 'openai', base: 'https://openrouter.ai/api/v1',            needsKey: true,  keyUrl: 'https://openrouter.ai/keys',    note: 'Many open models marked ":free". Limits are tight.', freeOnly: true },
+    openrouter: { name: 'OpenRouter (free models)', kind: 'openai', base: 'https://openrouter.ai/api/v1',            needsKey: true,  keyUrl: 'https://openrouter.ai/keys',    note: 'Many open models marked ":free". In your OpenRouter account open Settings → Privacy and allow free models to be used, otherwise they answer "not found".', freeOnly: true },
     gemini:     { name: 'Google Gemini (free key)', kind: 'gemini', base: 'https://generativelanguage.googleapis.com/v1beta', needsKey: true, keyUrl: 'https://aistudio.google.com/apikey', note: 'Can search Google for current facts. Free limits; check availability in your region.' },
+    custom:     { name: 'Other (OpenAI-style API)', kind: 'openai', base: '', needsKey: true, needsBase: true, keyUrl: 'https://platform.openai.com/api-keys', note: 'Any service with an OpenAI-style API. Paste its base URL below, e.g. https://api.openai.com/v1 (paid) or https://api.mistral.ai/v1.' },
     ollama:     { name: 'Ollama (on this PC)',      kind: 'openai', base: 'http://localhost:11434/v1',               needsKey: false, keyUrl: 'https://ollama.com/download',   note: 'Fully free and private, PC only. Needs Ollama installed and running.' }
   };
   function pickModel(provider, ids) {
@@ -96,6 +97,7 @@
       groq: [/gpt-oss-120b/, /llama-3\.3-70b/, /qwen.*(32|27)b/, /70b/, /gpt-oss-20b/],
       openrouter: [/llama-3\.3-70b.*free/, /gpt-oss-120b.*free/, /deepseek.*free/, /qwen.*free/, /free/],
       gemini: [/gemini-2\.5-flash$/, /gemini-.*flash$/, /flash/],
+      custom: [/gpt-4o-mini/, /gpt-4\.1-mini/, /mistral-small/, /small/, /mini/],
       ollama: [/qwen3/, /llama3\.[1-3]/, /gemma/, /./]
     }[provider] || [];
     for (const re of pref) { const m = ids.find(id => re.test(id)); if (m) return m; }
@@ -115,9 +117,13 @@
       o = o || {};
       let url, init;
       if (P.kind === 'openai') {
-        url = (cfg.base || P.base) + '/chat/completions';
+        if (!(cfg.base || P.base)) throw new VeraError('CONFIG', 'Paste the service base URL in Settings first.');
+        url = String(cfg.base || P.base).replace(/\/+$/, '') + '/chat/completions';
         const headers = { 'Content-Type': 'application/json' }; if (cfg.key) headers.Authorization = 'Bearer ' + cfg.key;
-        init = { method: 'POST', headers, body: JSON.stringify({ model: cfg.model, messages, temperature: o.temperature == null ? 0.3 : o.temperature, max_tokens: o.maxTokens || 1500 }) };
+        const thinker = /gpt-oss|qwen3|deepseek-r1|\br1\b|\bo[134]\b|reasoning|thinking/i.test(cfg.model || '');   // "thinking" models spend part of the token budget on hidden reasoning
+        const payload = { model: cfg.model, messages, temperature: o.temperature == null ? 0.3 : o.temperature, max_tokens: (o.maxTokens || 1500) + (thinker ? 3000 : 0) };
+        if (cfg.provider === 'groq' && /gpt-oss/i.test(cfg.model || '')) payload.reasoning_effort = 'low';
+        init = { method: 'POST', headers, body: JSON.stringify(payload) };
       } else {
         const sys = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n'), rest = messages.filter(m => m.role !== 'system');
         const body = { contents: rest.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })), generationConfig: { temperature: o.temperature == null ? 0.3 : o.temperature, maxOutputTokens: o.maxTokens || 1500 } };
@@ -131,13 +137,14 @@
         let res; try { res = await f(url, init); } catch (e) { throw new VeraError('NET', cfg.provider === 'ollama' ? 'Cannot reach Ollama. Is it running, and is OLLAMA_ORIGINS set for this site?' : 'No connection to the AI service. Check your internet.'); }
         if (res.ok) {
           const j = await res.json();
-          if (P.kind === 'openai') { const c = j.choices && j.choices[0] && j.choices[0].message; return { text: (c && c.content || '').trim(), sources: [] }; }
+          if (P.kind === 'openai') { const c = j.choices && j.choices[0] && j.choices[0].message; return { text: String(c && c.content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim(), sources: [] }; }
           const cand = j.candidates && j.candidates[0]; const text = cand && cand.content && cand.content.parts ? cand.content.parts.map(p => p.text || '').join('').trim() : '';
           const chunks = (cand && cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || [];
           return { text, sources: chunks.filter(c => c.web).map(c => ({ title: c.web.title || c.web.uri, url: c.web.uri })) };
         }
         let body = null; try { body = await res.json(); } catch (e) {}
         if ((res.status === 429 || res.status >= 500) && attempt < 2) { attempt++; await sleep(res.status === 429 ? 6000 * attempt : 2000); continue; }
+        if (res.status === 400 && attempt < 3 && P.kind === 'openai' && /reasoning_effort/i.test(JSON.stringify(body || {}))) { attempt = 3; const b = JSON.parse(init.body); delete b.reasoning_effort; init = Object.assign({}, init, { body: JSON.stringify(b) }); continue; }
         throw errFromStatus(res.status, body, cfg.provider);
       }
     }
@@ -148,11 +155,11 @@
     try {
       if (provider === 'ollama') { const r = await f('http://localhost:11434/api/tags'); const j = await r.json(); return (j.models || []).map(m => m.name); }
       if (P.kind === 'gemini') { const r = await f(P.base + '/models?key=' + encodeURIComponent(cfg.key) + '&pageSize=100'); if (!r.ok) throw errFromStatus(r.status, null, provider); const j = await r.json(); return (j.models || []).filter(m => (m.supportedGenerationMethods || []).indexOf('generateContent') !== -1).map(m => m.name.replace(/^models\//, '')).filter(n => /^gemini/.test(n)); }
-      const r = await f(P.base + '/models', { headers: cfg.key ? { Authorization: 'Bearer ' + cfg.key } : {} }); if (!r.ok) throw errFromStatus(r.status, null, provider);
+      const base = (cfg && cfg.base) || P.base; if (!base) throw new VeraError('CONFIG', 'Paste the service base URL first.'); const r = await f(base + '/models', { headers: cfg.key ? { Authorization: 'Bearer ' + cfg.key } : {} }); if (!r.ok) throw errFromStatus(r.status, null, provider);
       const j = await r.json(); let ids = (j.data || []).map(m => m.id);
       if (P.freeOnly) ids = ids.filter(id => /:free$/.test(id));
       return ids.filter(id => !/whisper|tts|guard|embed|moderation|vision-preview|orpheus|playai/i.test(id)).sort();
-    } catch (e) { if (e instanceof VeraError) throw e; throw new VeraError('NET', 'Could not load the model list.'); }
+    } catch (e) { if (e instanceof VeraError) throw e; throw new VeraError('NET', 'Could not load the model list. The service may block browser access, or the base URL is wrong.'); }
   }
 
   /* ================= web lookup (free) ================= */

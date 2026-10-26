@@ -103,10 +103,10 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const KEY = 'vera_state_v1';
-const DEF = { provider: 'groq', keys: {}, models: {}, mode: 'careful', web: true, tone: 'direct', tavily: '', profile: '' };
+const DEF = { provider: 'groq', keys: {}, models: {}, bases: {}, mode: 'careful', web: true, tone: 'direct', tavily: '', profile: '' };
 function load() { try { const v = JSON.parse(localStorage.getItem(KEY)); if (v && typeof v === 'object') return v; } catch (e) {} return null; }
 const S = Object.assign({ settings: Object.assign({}, DEF), convs: [], active: null, ack: false }, load() || {});
-S.settings = Object.assign({}, DEF, S.settings); S.settings.keys = S.settings.keys || {}; S.settings.models = S.settings.models || {};
+S.settings = Object.assign({}, DEF, S.settings); S.settings.keys = S.settings.keys || {}; S.settings.bases = S.settings.bases || {}; S.settings.models = S.settings.models || {};
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Could not save (storage full or blocked).'); } try { idbPut(JSON.stringify(S)); } catch (e) {} }
 function idb() { return new Promise((res, rej) => { try { const r = indexedDB.open('vera', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } }); }
 async function idbPut(v) { const d = await idb(); d.transaction('kv', 'readwrite').objectStore('kv').put(v, KEY); }
@@ -117,8 +117,10 @@ try { if (navigator.storage && navigator.storage.persist) navigator.storage.pers
 let busy = false, stepText = '';
 const P = () => Vera.PROVIDERS[S.settings.provider];
 const key = () => S.settings.keys[S.settings.provider] || '';
+const base = () => (S.settings.bases[S.settings.provider] || '').trim();
+const mkLLM = () => Vera.createLLM({ provider: S.settings.provider, key: key(), model: S.settings.models[S.settings.provider], base: base() || undefined });
 const conv = () => S.convs.find(c => c.id === S.active);
-const ready = () => !P().needsKey || !!key();
+const ready = () => (!P().needsKey || !!key()) && (!P().needsBase || !!base());
 function toast(m, ms) { const t = $('#toast'); t.textContent = m; t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => { t.style.display = 'none'; }, ms || 3000); }
 
 /* ---------- rendering ---------- */
@@ -173,7 +175,7 @@ async function send(text) {
   const history = c.msgs.filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
   c.msgs.push({ role: 'user', content: text }); if (c.title === 'New chat') c.title = text.slice(0, 44);
   $('#q').value = ''; autosize(); busy = true; stepText = 'Starting'; save(); render();
-  const st = S.settings, llm = Vera.createLLM({ provider: st.provider, key: key(), model: st.models[st.provider] });
+  const st = S.settings, llm = mkLLM();
   try {
     const r = await Vera.ask({ llm, question: text, history, mode: st.mode, web: st.web, nativeSearch: st.provider === 'gemini', tone: st.tone, profile: st.profile,
       search: q => Vera.webSearch(q, { tavilyKey: st.tavily }), onStep: (n, d) => { stepText = n + (d && n.indexOf('Fixing') !== 0 ? ': ' + d : ''); const e = $('#stepTxt'); if (e) e.textContent = stepText; } });
@@ -190,6 +192,7 @@ function openSettings() {
   const st = S.settings, p = P();
   const models = st._list && st._listFor === st.provider ? st._list : (st.models[st.provider] ? [st.models[st.provider]] : []);
   let h = '<h2>Connect a free AI model</h2><label class="l" style="margin-top:0">Provider</label><select id="sProv">' + Object.keys(Vera.PROVIDERS).map(k => '<option value="' + k + '"' + (st.provider === k ? ' selected' : '') + '>' + Vera.PROVIDERS[k].name + '</option>').join('') + '</select><div class="dim small" style="margin-top:6px">' + esc(p.note) + '</div>';
+  if (p.needsBase) h += '<label class="l">Base URL</label><input type="text" id="sBase" value="' + esc(base()) + '" placeholder="https://api.openai.com/v1" autocomplete="off">';
   if (p.needsKey) h += '<label class="l">API key <a href="' + p.keyUrl + '" target="_blank" rel="noopener noreferrer" class="small">(get a free key)</a></label><input type="password" id="sKey" value="' + esc(key()) + '" autocomplete="off" placeholder="paste key here">' + (st.provider === 'gemini' && !key() && hasFEKey() ? '<button class="btn sm" style="margin-top:8px" data-act="feKey">Use the Gemini key saved in FE</button>' : '');
   else h += '<div class="note">Install Ollama from <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">ollama.com</a>, run a model (for example <b>ollama pull qwen3:8b</b>), then start Ollama with the setting <b>OLLAMA_ORIGINS=https://776vvfyn45-commits.github.io</b>. Works on a PC browser only, not on a phone.</div>';
   h += '<label class="l">Model</label><div class="row"><select id="sModel">' + (models.length ? models.map(m => '<option' + (st.models[st.provider] === m ? ' selected' : '') + '>' + esc(m) + '</option>').join('') : '<option value="">(load the list)</option>') + '</select><button class="btn" data-act="loadModels">Load list</button></div>';
@@ -203,11 +206,11 @@ function openSettings() {
   sheet(h);
 }
 function hasFEKey() { try { const j = JSON.parse(localStorage.getItem('fe_state_v1')); return !!(j && j.gemKey); } catch (e) { return false; } }
-function readConn() { const st = S.settings; st.provider = $('#sProv').value; if ($('#sKey')) st.keys[st.provider] = $('#sKey').value.trim(); const m = $('#sModel').value; if (m) st.models[st.provider] = m; st.tone = $('#sTone').value; st.tavily = $('#sTav').value.trim(); }
+function readConn() { const st = S.settings; st.provider = $('#sProv').value; if ($('#sKey')) st.keys[st.provider] = $('#sKey').value.trim(); const m = $('#sModel').value; if (m) st.models[st.provider] = m; if ($('#sBase')) st.bases[st.provider] = $('#sBase').value.trim().replace(/\/+$/, ''); st.tone = $('#sTone').value; st.tavily = $('#sTav').value.trim(); }
 
 async function runTests() {
   const out = $('#testOut'); if (!ready() || !S.settings.models[S.settings.provider]) { toast('Connect a model first.'); return; }
-  const st = S.settings, llm = Vera.createLLM({ provider: st.provider, key: key(), model: st.models[st.provider] }); let pass = 0, h = '';
+  const st = S.settings, llm = mkLLM(); let pass = 0, h = '';
   for (const t of Vera.REALITY_TESTS) {
     out.innerHTML = h + '<div class="dim small" style="margin-top:8px">Testing: ' + esc(t.prompt.slice(0, 60)) + '…</div>';
     try { const r = await Vera.ask({ llm, question: t.prompt, history: [], mode: st.mode, web: false, tone: st.tone, profile: '' }); const g = Vera.gradeTest(t, r.text); if (g.pass) pass++;
@@ -235,9 +238,9 @@ document.addEventListener('click', async e => {
     case 'copy': { const m = conv().msgs[+d.i]; try { await navigator.clipboard.writeText(m.content); toast('Copied'); } catch (er) { toast('Copy not allowed here.'); } break; }
     case 'retry': { const c = conv(); if (!c) break; c.msgs.pop(); const u = c.msgs.pop(); save(); render(); if (u) send(u.content); break; }
     case 'feKey': try { S.settings.keys.gemini = JSON.parse(localStorage.getItem('fe_state_v1')).gemKey; save(); openSettings(); } catch (er) {} break;
-    case 'loadModels': { readConn(); toast('Loading models…', 8000); try { const ids = await Vera.listModels(S.settings.provider, { key: key() }); S.settings._list = ids; S.settings._listFor = S.settings.provider; if (!S.settings.models[S.settings.provider] || ids.indexOf(S.settings.models[S.settings.provider]) === -1) S.settings.models[S.settings.provider] = Vera.pickModel(S.settings.provider, ids); save(); openSettings(); toast(ids.length + ' models found.'); } catch (er) { toast(er.message, 6000); } break; }
-    case 'saveConn': { readConn(); if (P().needsKey && !key()) { toast('Paste a key first.'); break; } if (!S.settings.models[S.settings.provider]) { toast('Tap "Load list" and pick a model.'); break; }
-      toast('Testing…', 15000); try { const r = await Vera.createLLM({ provider: S.settings.provider, key: key(), model: S.settings.models[S.settings.provider] })([{ role: 'user', content: 'Reply with the single word: ready' }], { maxTokens: 20, temperature: 0 }); save(); toast(r.text ? 'Connected ✓' : 'Connected, but the model answered with nothing. Try another model.'); render(); } catch (er) { toast(er.message, 7000); } break; }
+    case 'loadModels': { readConn(); toast('Loading models…', 8000); try { const ids = await Vera.listModels(S.settings.provider, { key: key(), base: base() || undefined }); S.settings._list = ids; S.settings._listFor = S.settings.provider; if (!S.settings.models[S.settings.provider] || ids.indexOf(S.settings.models[S.settings.provider]) === -1) S.settings.models[S.settings.provider] = Vera.pickModel(S.settings.provider, ids); save(); openSettings(); toast(ids.length + ' models found.'); } catch (er) { toast(er.message, 6000); } break; }
+    case 'saveConn': { readConn(); if (P().needsKey && !key()) { toast('Paste a key first.'); break; } if (P().needsBase && !base()) { toast('Paste the base URL first.'); break; } if (!S.settings.models[S.settings.provider]) { toast('Tap "Load list" and pick a model.'); break; }
+      toast('Testing…', 15000); try { const r = await mkLLM()([{ role: 'user', content: 'Reply with the single word: ready' }], { maxTokens: 60, temperature: 0 }); save(); toast(r.text ? 'Connected ✓' : 'Connected, but the model answered with nothing. Try another model.'); render(); } catch (er) { toast(er.message, 7000); } break; }
     case 'saveProf': S.settings.profile = $('#sProf').value; save(); toast('Saved.'); break;
     case 'runTests': readConn(); save(); runTests(); break;
     case 'export': { const b = new Blob([JSON.stringify(Object.assign({}, S, { settings: Object.assign({}, S.settings, { keys: {}, tavily: '' }) }))], { type: 'application/json' }), u = URL.createObjectURL(b), l = document.createElement('a'); l.href = u; l.download = 'vera-backup.json'; l.click(); setTimeout(() => URL.revokeObjectURL(u), 2000); toast('Backup saved (keys not included).'); break; }
