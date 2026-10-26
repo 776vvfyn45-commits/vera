@@ -32,6 +32,7 @@
     '- Use a short list only when it really helps (ingredients, steps). Otherwise write short paragraphs. A little bold is fine for key words.',
     '- Be honest in a natural way. For harmless everyday topics (cooking, trivia, simple how-to) just help; do not add warnings, caveats or "what can go wrong" lectures. Bring up risks, doubts or reality checks only when they truly matter (money, health, safety, big decisions, unrealistic plans), and then say it plainly in a few friendly sentences, with numbers if you have them.',
     '- If you are unsure, say so briefly in your own words, once.',
+    '- Ignore the formatting of earlier assistant messages in this conversation; follow these rules.',
     '- On a new last line write "Next:" followed by up to 3 very short follow-up questions the user might want to ask, separated by " | ". Skip this line for greetings and small talk.'
   ].join('\n');
 
@@ -198,11 +199,37 @@
     }
     return news.concat(web);
   }
+  const STOP = new Set('what whats is are was were the a an of in on at for to and or current currently news latest recent recently today tonight now right new newest things thing happening happened going about tell me give show any some please update updates headlines'.split(' '));
+  function keywords(q) { const w = String(q || '').toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter(x => x && !STOP.has(x)); return (w.length ? w : String(q || '').split(/\s+/)).slice(0, 6).join(' '); }
+  function parseRss(xml, limit) {
+    const dec = s => String(s || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
+    const tg = (x, t) => { const m = new RegExp('<' + t + '[^>]*>([\\s\\S]*?)</' + t + '>', 'i').exec(x); return m ? dec(m[1]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''; };
+    const out = [], re = /<item>([\s\S]*?)<\/item>/gi; let m;
+    while ((m = re.exec(xml)) && out.length < limit) { const x = m[1], t = tg(x, 'title').split(' - '); out.push({ title: t.length > 1 ? t.slice(0, -1).join(' - ') : t[0], source: tg(x, 'source') || (t.length > 1 ? t[t.length - 1] : ''), url: tg(x, 'link'), date: tg(x, 'pubDate') }); }
+    return out;
+  }
+  const isoDay = s => { const d = new Date(s); return isNaN(d) ? '' : d.toISOString().slice(0, 10); };
+  async function gdeltSearch(q, o) {   // free global news index, no key (GDELT)
+    const f = o.fetch || fetch, r = await timed(f, 'https://api.gdeltproject.org/api/v2/doc/doc?query=' + encodeURIComponent(keywords(q)) + '&mode=ArtList&maxrecords=10&format=json&sort=DateDesc&timespan=7d', 12000);
+    if (!r.ok) return []; const j = await r.json().catch(() => null);
+    return ((j && j.articles) || []).map(a => { const s = String(a.seendate || ''); return { title: a.title, url: a.url, source: a.domain, date: s.length >= 8 ? s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) : '', text: '' }; });
+  }
+  async function newsRssViaProxy(q, o) {   // Google News feed through a public CORS relay (no setup; used only when no Worker is set)
+    const f = o.fetch || fetch, L = localeOf(o), feed = 'https://news.google.com/rss/search?q=' + encodeURIComponent(keywords(q) + ' when:7d') + '&hl=' + L.hl + '&gl=' + L.gl + '&ceid=' + L.gl + ':' + L.hl;
+    const r = await timed(f, 'https://api.allorigins.win/raw?url=' + encodeURIComponent(feed), 12000); if (!r.ok) return [];
+    return parseRss(await r.text(), 8).map(x => ({ title: x.title, url: x.url, source: x.source, date: isoDay(x.date), text: '' }));
+  }
+  async function freeNews(q, o) {
+    const [a, b] = await Promise.all([gdeltSearch(q, o).catch(() => []), newsRssViaProxy(q, o).catch(() => [])]);
+    const L = localeOf(o), de = L.hl === 'de';
+    return (de ? b.concat(a) : a.concat(b)).filter(x => x.title && x.url);
+  }
   async function webSearch(q, o) { // Tavily (if a key is set) first, Wikipedia as the free fallback
     o = o || {}; let out = [];
     if (o.worker) { try { out = await workerSearch(q, o); } catch (e) {} if (out.length >= 2) return out; }
     if (o.tavilyKey) { try { out = await tavilySearch(q, o); } catch (e) {} }
-    if (out.length < 2) { try { out = out.concat(await wikiSearch(q, o)); } catch (e) {} }
+    if (o.fresh && out.length < 2) { try { out = out.concat(await freeNews(q, o)); } catch (e) {} }
+    if (out.length < (o.fresh ? 3 : 2)) { try { out = out.concat(await wikiSearch(q, o)); } catch (e) {} }
     return out;
   }
 
@@ -292,5 +319,5 @@
     return { pass: okMust && okNot, missing: test.must.filter(re => !re.test(a)).map(String), violated: test.mustNot.filter(re => re.test(a)).map(String) };
   }
 
-  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
+  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, freeNews, parseRss, keywords, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
 });
