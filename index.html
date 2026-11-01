@@ -174,7 +174,8 @@ function turnHtml(m, i, last) {
   const isTyping = typing && typing.i === i;
   let h = '<div class="turn a"><div class="av">V</div><div class="body"><div class="txt' + (isTyping ? ' caret' : '') + '" id="t' + i + '">' + md(isTyping ? typing.shown : m.content) + '</div>';
   if (!isTyping) {
-    if (x.noLive) h += '<div class="small dim" style="margin-top:8px">ℹ️ I could not check live information' + (hasLive() ? '' : ' (live search is not connected)') + ', so recent facts here may be out of date. ' + (hasLive() ? '' : '<a href="#" data-act="settings">Set up live search</a>') + '</div>';
+    if (x.noLive) h += '<div class="small dim" style="margin-top:8px">ℹ️ I could not check live information' + (hasLive() ? '' : ' (live search is not connected)') + ', so recent facts here may be out of date. ' + (hasLive() ? '' : '<a href="#" data-act="settings">Set up live search</a> (free, 5 minutes, makes it much more reliable).') + '</div>';
+    if (x.diag && x.diag.length) h += '<div class="small dim" style="margin-top:6px">Searched: ' + x.diag.map(d => esc((d.category || d.query)) + ' ' + (d.count ? d.count + ' ✓' : '0')).join(' · ') + '</div>';
     h += '<div class="acts"><button class="mini" data-act="copy" data-i="' + i + '">Copy</button>' + (last ? '<button class="mini" data-act="regen">↻ Redo</button>' : '') + '</div>';
     if (x.usedSearch || (x.issues && x.issues.length)) {
       h += '<details class="how"><summary>' + (x.usedSearch ? (x.fresh ? '🔎 Checked live on the web' : '🔎 I checked this online') : '✓ I double-checked this') + (x.issues && x.issues.length ? ' and fixed ' + x.issues.length + ' thing' + (x.issues.length > 1 ? 's' : '') : '') + '</summary><div class="in">' +
@@ -234,7 +235,7 @@ async function send(text) {
     const r = await Vera.ask({ llm, question: text, history, mode: st.mode, web: st.web, nativeSearch: st.provider === 'gemini', live: hasLive(), tone: st.tone, profile: st.profile, locale: navigator.language,
       search: (q, o) => Vera.webSearch(q, { tavilyKey: st.tavily, worker: st.worker, fresh: !o || o.fresh !== false, locale: navigator.language }),
       onStep: (n, d) => { stepText = /Looking/.test(n) ? 'Looking that up…' : /Check|Second|Fix/.test(n) ? 'Double-checking…' : /Draft|Reply/.test(n) ? 'Writing…' : 'Thinking…'; const e = $('#stepTxt'); if (e) e.textContent = stepText; } });
-    c.msgs.push({ role: 'assistant', content: r.text, meta: { steps: r.steps, issues: r.issues, sources: r.sources, calls: r.calls, usedSearch: r.usedSearch, followups: r.followups, kind: r.kind, fresh: r.fresh, noLive: r.noLive } });
+    c.msgs.push({ role: 'assistant', content: r.text, meta: { steps: r.steps, issues: r.issues, sources: r.sources, calls: r.calls, usedSearch: r.usedSearch, diag: r.diag, followups: r.followups, kind: r.kind, fresh: r.fresh, noLive: r.noLive } });
     typing = { i: c.msgs.length - 1, shown: '' }; busy = false; save(); render(); typeIn(c.msgs.length - 1, r.text);
   } catch (e) {
     c.msgs.push({ role: 'assistant', error: true, content: friendly(e.code, e.message) }); busy = false; save(); render();

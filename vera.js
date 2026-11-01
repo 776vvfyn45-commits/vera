@@ -191,8 +191,9 @@
   async function workerSearch(q, o) {   // your own free Cloudflare Worker (web-worker.js): fresh news + web + page text
     const f = o.fetch || fetch, base = String(o.worker).replace(/\/+$/, ''), L = localeOf(o), enc = encodeURIComponent, fresh = o.fresh !== false;
     const get = async path => { try { const r = await timed(f, base + path, 12000); if (!r.ok) return null; return await r.json(); } catch (e) { return null; } };
-    const [nj, wj] = await Promise.all([fresh ? get('/news?q=' + enc(q) + '&hl=' + L.hl + '&gl=' + L.gl) : null, get('/web?q=' + enc(q) + '&mkt=' + L.mkt)]);
-    const news = ((nj && nj.results) || []).slice(0, 5).map(x => ({ title: x.title, url: x.url, date: x.date ? new Date(x.date).toISOString().slice(0, 10) : '', source: x.source, text: '' }));
+    const [nj, bj, wj] = await Promise.all([fresh ? get('/news?q=' + enc(q) + '&hl=' + L.hl + '&gl=' + L.gl) : null, fresh ? get('/bnews?q=' + enc(q) + '&mkt=' + L.mkt) : null, get('/web?q=' + enc(q) + '&mkt=' + L.mkt)]);
+    const nd = d => { const t = new Date(d); return d && !isNaN(t) ? t.toISOString().slice(0, 10) : ''; };
+    const news = ((nj && nj.results) || []).slice(0, 4).concat(((bj && bj.results) || []).slice(0, 4)).map(x => ({ title: x.title, url: x.url, date: nd(x.date), source: x.source, text: x.text || '' }));
     const web = ((wj && wj.results) || []).slice(0, 4).map(x => ({ title: x.title, url: x.url, date: x.date ? String(x.date).slice(0, 16) : '', source: '', text: x.text || '' }));
     if (o.read !== false) {   // read the top two normal web pages for real content
       await Promise.all(web.filter(w => !/news\.google\.com/.test(w.url)).slice(0, 2).map(async w => { const j = await get('/read?url=' + enc(w.url)); if (j && j.text && j.text.length > 200) w.text = j.text.slice(0, 1500); }));
@@ -200,7 +201,7 @@
     return news.concat(web);
   }
   const STOP = new Set('what whats is are was were the a an of in on at for to and or current currently news latest recent recently today tonight now right new newest things thing happening happened going about tell me give show any some please update updates headlines'.split(' '));
-  function keywords(q) { const w = String(q || '').toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter(x => x && !STOP.has(x)); return (w.length ? w : String(q || '').split(/\s+/)).slice(0, 6).join(' '); }
+  function keywords(q) { const w = String(q || '').toLowerCase().replace(/['’]/g, '').replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter(x => x && !STOP.has(x)); return (w.length ? w : String(q || '').split(/\s+/)).slice(0, 6).join(' '); }
   function parseRss(xml, limit) {
     const dec = s => String(s || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
     const tg = (x, t) => { const m = new RegExp('<' + t + '[^>]*>([\\s\\S]*?)</' + t + '>', 'i').exec(x); return m ? dec(m[1]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''; };
@@ -214,15 +215,35 @@
     if (!r.ok) return []; const j = await r.json().catch(() => null);
     return ((j && j.articles) || []).map(a => { const s = String(a.seendate || ''); return { title: a.title, url: a.url, source: a.domain, date: s.length >= 8 ? s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) : '', text: '' }; });
   }
-  async function newsRssViaProxy(q, o) {   // Google News feed through a public CORS relay (no setup; used only when no Worker is set)
-    const f = o.fetch || fetch, L = localeOf(o), feed = 'https://news.google.com/rss/search?q=' + encodeURIComponent(keywords(q) + ' when:7d') + '&hl=' + L.hl + '&gl=' + L.gl + '&ceid=' + L.gl + ':' + L.hl;
-    const r = await timed(f, 'https://api.allorigins.win/raw?url=' + encodeURIComponent(feed), 12000); if (!r.ok) return [];
-    return parseRss(await r.text(), 8).map(x => ({ title: x.title, url: x.url, source: x.source, date: isoDay(x.date), text: '' }));
+  const RELAYS = [u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u), u => 'https://corsproxy.io/?' + encodeURIComponent(u), u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u)];
+  async function viaRelay(feed, o) {   // try several public CORS relays until one answers with a feed
+    const f = o.fetch || fetch;
+    for (const mk of RELAYS) { try { const r = await timed(f, mk(feed), 8000); if (r.ok) { const t = await r.text(); if (/<item>/i.test(t)) return t; } } catch (e) {} }
+    return '';
+  }
+  async function newsRssViaProxy(q, o) {   // Google News + Bing News feeds through public CORS relays (no setup; used only when no Worker is set)
+    const L = localeOf(o), kw = keywords(q);
+    const g = 'https://news.google.com/rss/search?q=' + encodeURIComponent(kw + ' when:7d') + '&hl=' + L.hl + '&gl=' + L.gl + '&ceid=' + L.gl + ':' + L.hl;
+    const b = 'https://www.bing.com/news/search?format=rss&q=' + encodeURIComponent(kw) + '&mkt=' + L.mkt;
+    const [gx, bx] = await Promise.all([viaRelay(g, o), viaRelay(b, o)]);
+    const fix = u => { try { return new URL(u).searchParams.get('url') || u; } catch (e) { return u; } };
+    return parseRss(gx, 6).concat(parseRss(bx, 6).map(x => Object.assign(x, { url: fix(x.url) }))).map(x => ({ title: x.title, url: x.url, source: x.source, date: isoDay(x.date), text: '' }));
   }
   async function freeNews(q, o) {
     const [a, b] = await Promise.all([gdeltSearch(q, o).catch(() => []), newsRssViaProxy(q, o).catch(() => [])]);
     const L = localeOf(o), de = L.hl === 'de';
-    return (de ? b.concat(a) : a.concat(b)).filter(x => x.title && x.url);
+    const seen = new Set();
+    return b.concat(a).filter(x => x.title && x.url && !seen.has(x.url) && seen.add(x.url));
+  }
+  /* broad "what's happening in X" questions: fan out into category searches so results cover events, music, food, news ... */
+  const BROAD_RE = /\b(what.?s (happening|going on|on)|happening|going on|things to do|events?|this (weekend|week)|tonight|weekend|was (ist|passiert) los|veranstaltungen|los in)\b/i;
+  const CATS = [['Events', 'events this week'], ['Music', 'concerts live music'], ['Food', 'food festival market restaurant opening'], ['Culture', 'exhibition theatre festival'], ['News', 'news today']];
+  function expandQueries(question, routed) {
+    const base = keywords(question).replace(/\b(events?|weekend|week|things|do|going|on|this|los|veranstaltungen)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (!base || !BROAD_RE.test(question)) return (routed || []).map(q => ({ q, cat: '' }));
+    const out = CATS.map(c => ({ q: base + ' ' + c[1], cat: c[0] }));
+    (routed || []).forEach(q => { if (out.length < 6 && !out.some(x => x.q.toLowerCase() === q.toLowerCase())) out.push({ q, cat: '' }); });
+    return out;
   }
   async function webSearch(q, o) { // Tavily (if a key is set) first, Wikipedia as the free fallback
     o = o || {}; let out = [];
@@ -235,6 +256,12 @@
 
   /* ================= the answer pipeline ================= */
   function dedupeSources(list, limit) { const seen = new Set(), out = []; list.forEach(s => { if (s && s.url && !seen.has(s.url)) { seen.add(s.url); out.push({ n: out.length + 1, title: s.title || s.url, url: s.url, text: s.text || '', date: s.date || '', source: s.source || '' }); } }); return out.slice(0, limit || 5); }
+
+  function dedupeBalanced(list, limit) {   // keep a few from every category so one topic cannot crowd out the rest
+    const groups = {}; list.forEach(s => { const m = /^\[([^\]]+)\]/.exec(s.title || ''), k = m ? m[1] : '-'; (groups[k] = groups[k] || []).push(s); });
+    const keys = Object.keys(groups), mixed = []; for (let i = 0; mixed.length < list.length && i < 20; i++) keys.forEach(k => { if (groups[k][i]) mixed.push(groups[k][i]); });
+    return dedupeSources(mixed, limit);
+  }
 
   /* ask(): llm(messages,{temperature,json,grounding}) -> {text,sources};  search(q) -> [{title,url,text}] */
   async function ask(o) {
@@ -260,11 +287,16 @@
 
     /* 2. look things up */
     let sources = [], grounded = [];
+    let diag = [], broad = false;
     if (o.web && !chat && route.search.length && !o.nativeSearch) {
-      step('Looking things up', route.search.join(' · '));
-      const found = []; for (const q of route.search) { try { (await o.search(q, { fresh })).forEach(x => found.push(x)); } catch (e) {} }
-      found.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) * (fresh ? 1 : 0));
-      sources = dedupeSources(found, fresh ? 7 : 5);
+      const plan = fresh ? expandQueries(question, route.search) : route.search.map(q => ({ q, cat: '' }));
+      broad = plan.some(p => p.cat);
+      step('Looking things up', plan.map(p => p.q).join(' · '));
+      const per = await Promise.all(plan.map(async p => { try { const r = (await o.search(p.q, { fresh })) || []; return { p, r }; } catch (e) { return { p, r: [], err: String(e && e.message || e) }; } }));
+      const found = [];
+      per.forEach(x => { diag.push({ query: x.p.q, category: x.p.cat, count: x.r.length, error: x.err || '' }); x.r.forEach(s => found.push(x.p.cat ? Object.assign({}, s, { title: '[' + x.p.cat + '] ' + s.title }) : s)); });
+      if (fresh) found.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+      sources = broad ? dedupeBalanced(found, 14) : dedupeSources(found, fresh ? 8 : 5);
     }
     const noLive = fresh && (!o.web || (!o.nativeSearch && !sources.length) || (!liveOk && !sources.length));
     if (noLive) step('No live information available');
@@ -272,7 +304,7 @@
     /* 3. draft */
     step(chat ? 'Replying' : 'Drafting an answer');
     const sys = systemPrompt({ kind: route.kind, profile: o.profile, sources, today: o.today, tone: o.tone });
-    const hint = [fresh && sources.length ? 'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live web sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
+    const hint = [broad && sources.length ? 'The user asked what is going on somewhere. The SOURCES are tagged by category in brackets (Events, Music, Food, Culture, News). Answer like a friendly local: a short intro, then a few short groups (what is on, music, food, culture, news) with concrete names and dates from the SOURCES, each with [n]. Skip a group if its sources are empty or off-topic. Never invent events or dates. End by offering to narrow down (dates, taste, budget).' : '', fresh && sources.length ?'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live web sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
     const draftMsgs = [{ role: 'system', content: sys + (hint ? '\n\n' + hint : '') }].concat(history, [{ role: 'user', content: question }]);
     const d = await run(draftMsgs, { temperature: 0.3, grounding: !!o.nativeSearch && o.web && !chat && (fresh || route.search.length > 0), maxTokens: 1500 });
     let text = d.text;
@@ -302,7 +334,7 @@
       }
     }
     const sp = splitFollowups(sanitizeAnswer(text, sources));
-    return { text: sp.body, followups: sp.followups, fresh, noLive, kind: route.kind, stakes: route.stakes, sources, issues, confidence, steps, calls, usedSearch: sources.length > 0 };
+    return { text: sp.body, followups: sp.followups, fresh, noLive, kind: route.kind, stakes: route.stakes, sources, issues, confidence, steps, calls, diag, usedSearch: sources.length > 0 };
   }
 
   /* ================= built-in "does it stay honest?" tests (graded by simple rules; you still read them) ================= */
@@ -319,5 +351,5 @@
     return { pass: okMust && okNot, missing: test.must.filter(re => !re.test(a)).map(String), violated: test.mustNot.filter(re => re.test(a)).map(String) };
   }
 
-  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, freeNews, parseRss, keywords, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
+  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, freeNews, expandQueries, parseRss, keywords, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
 });
