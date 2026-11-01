@@ -79,6 +79,7 @@
   function sanitizeAnswer(text, sources) {
     const max = sources ? sources.length : 0, allowed = new Set((sources || []).map(s => s.url));
     let t = String(text || '');
+    t = t.replace(/[【\[]\s*(\d{1,2})\s*[】\]]/g, '[$1]');                            // some models write 【8】
     t = t.replace(/\[(\d{1,2})\]/g, (m, d) => (+d >= 1 && +d <= max) ? m : '');          // drop citations that point to nothing
     t = t.replace(/https?:\/\/[^\s)\]>"']+/g, u => allowed.has(u.replace(/[.,;:]+$/, '')) ? u : '[link removed: not from a checked source]');
     return t.replace(/ {2,}/g, ' ').trim();
@@ -245,6 +246,25 @@
     (routed || []).forEach(q => { if (out.length < 6 && !out.some(x => x.q.toLowerCase() === q.toLowerCase())) out.push({ q, cat: '' }); });
     return out;
   }
+  /* real weather numbers: Open-Meteo (free, no key, works from the browser) */
+  const WEATHER_RE = /\b(we?a?th?er|wetter|forecast|vorhersage|temperature|temperatur|rain(ing)?|regen|snow|schnee)\b/i;
+  const WCODE = { 0: 'clear', 1: 'mostly clear', 2: 'partly cloudy', 3: 'overcast', 45: 'fog', 48: 'fog', 51: 'light drizzle', 53: 'drizzle', 55: 'heavy drizzle', 61: 'light rain', 63: 'rain', 65: 'heavy rain', 71: 'light snow', 73: 'snow', 75: 'heavy snow', 80: 'rain showers', 81: 'rain showers', 82: 'heavy showers', 95: 'thunderstorm', 96: 'thunderstorm with hail', 99: 'thunderstorm with hail' };
+  async function weatherSource(question, o) {
+    o = o || {}; if (!WEATHER_RE.test(question)) return null;
+    const f = o.fetch || fetch, m = /\b(?:in|for|at|bei|für|fuer|in)\s+([^?.,!]+?)\s*(?:today|tomorrow|now|this|right|heute|morgen|\?|$)/i.exec(String(question).trim());
+    const place = (m ? m[1] : keywords(String(question).replace(WEATHER_RE, ' '))).trim(); if (!place) return null;
+    const words = place.split(/\s+/), tries = [place]; if (words.length > 1) { tries.push(words.slice(0, -1).join(' ')); tries.push(words[0]); }
+    let loc = null;
+    for (const t of tries) { try { const r = await timed(f, 'https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=' + encodeURIComponent(t), 8000); const j = r.ok && await r.json(); if (j && j.results && j.results[0]) { loc = j.results[0]; break; } } catch (e) {} }
+    if (!loc) return null;
+    try {
+      const r = await timed(f, 'https://api.open-meteo.com/v1/forecast?latitude=' + loc.latitude + '&longitude=' + loc.longitude + '&current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&timezone=auto&forecast_days=4', 8000);
+      if (!r.ok) return null; const j = await r.json(), c = j.current || {}, d = j.daily || {};
+      const days = (d.time || []).map((t, i) => t + ': ' + (WCODE[d.weather_code[i]] || 'mixed') + ', ' + Math.round(d.temperature_2m_min[i]) + ' to ' + Math.round(d.temperature_2m_max[i]) + ' °C, rain ' + d.precipitation_sum[i] + ' mm').join('; ');
+      const text = 'Weather for ' + loc.name + (loc.country ? ', ' + loc.country : '') + ' (measured ' + String(c.time || '').replace('T', ' ') + ' local time): now ' + Math.round(c.temperature_2m) + ' °C, feels like ' + Math.round(c.apparent_temperature) + ' °C, ' + (WCODE[c.weather_code] || 'mixed conditions') + ', wind ' + Math.round(c.wind_speed_10m) + ' km/h, rain now ' + c.precipitation + ' mm. Next days: ' + days + '.';
+      return { title: 'Current weather in ' + loc.name, url: 'https://open-meteo.com/en/docs#latitude=' + loc.latitude + '&longitude=' + loc.longitude, source: 'Open-Meteo', date: String(c.time || '').slice(0, 10) || new Date().toISOString().slice(0, 10), text };
+    } catch (e) { return null; }
+  }
   async function webSearch(q, o) { // Tavily (if a key is set) first, Wikipedia as the free fallback
     o = o || {}; let out = [];
     if (o.worker) { try { out = await workerSearch(q, o); } catch (e) {} if (out.length >= 2) return out; }
@@ -288,15 +308,20 @@
     /* 2. look things up */
     let sources = [], grounded = [];
     let diag = [], broad = false;
-    if (o.web && !chat && route.search.length && !o.nativeSearch) {
+    const yr = new Date().getFullYear();   // old years in search queries bring old pages
+    if (fresh) route.search = route.search.map(q => q.replace(/\b(19\d\d|20\d\d)\b/g, y => (+y < yr ? '' : y)).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const wx = o.web && !chat && !o.nativeSearch && WEATHER_RE.test(question) ? await weatherSource(question, o).catch(() => null) : null;
+    if (wx) { diag.push({ query: 'weather data', category: 'Weather', count: 1, error: '' }); }
+    if (o.web && !chat && (route.search.length || wx) && !o.nativeSearch) {
       const plan = fresh ? expandQueries(question, route.search) : route.search.map(q => ({ q, cat: '' }));
       broad = plan.some(p => p.cat);
       step('Looking things up', plan.map(p => p.q).join(' · '));
       const per = await Promise.all(plan.map(async p => { try { const r = (await o.search(p.q, { fresh })) || []; return { p, r }; } catch (e) { return { p, r: [], err: String(e && e.message || e) }; } }));
-      const found = [];
+      const found = wx ? [wx] : [];
       per.forEach(x => { diag.push({ query: x.p.q, category: x.p.cat, count: x.r.length, error: x.err || '' }); x.r.forEach(s => found.push(x.p.cat ? Object.assign({}, s, { title: '[' + x.p.cat + '] ' + s.title }) : s)); });
       if (fresh) found.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
       sources = broad ? dedupeBalanced(found, 14) : dedupeSources(found, fresh ? 8 : 5);
+      if (wx && !sources.some(s => s.url === wx.url)) sources = dedupeSources([wx].concat(sources), 8);
     }
     const noLive = fresh && (!o.web || (!o.nativeSearch && !sources.length) || (!liveOk && !sources.length));
     if (noLive) step('No live information available');
@@ -304,7 +329,7 @@
     /* 3. draft */
     step(chat ? 'Replying' : 'Drafting an answer');
     const sys = systemPrompt({ kind: route.kind, profile: o.profile, sources, today: o.today, tone: o.tone });
-    const hint = [broad && sources.length ? 'The user asked what is going on somewhere. The SOURCES are tagged by category in brackets (Events, Music, Food, Culture, News). Answer like a friendly local: a short intro, then a few short groups (what is on, music, food, culture, news) with concrete names and dates from the SOURCES, each with [n]. Skip a group if its sources are empty or off-topic. Never invent events or dates. End by offering to narrow down (dates, taste, budget).' : '', fresh && sources.length ?'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live web sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
+    const hint = [wx ? 'The first SOURCE contains real measured weather numbers for the place. Give the temperature, conditions and the next few days from it directly and briefly, with [1]. Do not send the user to other websites.' : '', broad && sources.length ? 'The user asked what is going on somewhere. The SOURCES are tagged by category in brackets (Events, Music, Food, Culture, News). Answer like a friendly local: a short intro, then a few short groups (what is on, music, food, culture, news) with concrete names and dates from the SOURCES, each with [n]. Skip a group if its sources are empty or off-topic. Never invent events or dates. End by offering to narrow down (dates, taste, budget).' : '', fresh && sources.length ?'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live web sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
     const draftMsgs = [{ role: 'system', content: sys + (hint ? '\n\n' + hint : '') }].concat(history, [{ role: 'user', content: question }]);
     const d = await run(draftMsgs, { temperature: 0.3, grounding: !!o.nativeSearch && o.web && !chat && (fresh || route.search.length > 0), maxTokens: 1500 });
     let text = d.text;
@@ -351,5 +376,5 @@
     return { pass: okMust && okNot, missing: test.must.filter(re => !re.test(a)).map(String), violated: test.mustNot.filter(re => re.test(a)).map(String) };
   }
 
-  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, freeNews, expandQueries, parseRss, keywords, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
+  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, freeNews, expandQueries, weatherSource, parseRss, keywords, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
 });
