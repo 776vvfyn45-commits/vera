@@ -47,14 +47,14 @@
   }
   function sourcesBlock(sources) {
     if (!sources || !sources.length) return 'SOURCES: none. Use general knowledge and say so for any specific fact.';
-    return 'SOURCES (live results fetched just now from the web; cite as [n]; do not cite anything else):\n' + sources.map(s => '[' + s.n + '] ' + s.title + (s.source ? ' - ' + s.source : '') + (s.date ? ' (' + s.date + ')' : '') + ' <' + s.url + '>\n' + String(s.text || '').slice(0, 900)).join('\n\n');
+    return 'SOURCES (live results fetched just now from the web; cite as [n]; do not cite anything else):\n' + sources.map(s => '[' + s.n + '] ' + s.title + (s.source ? ' - ' + s.source : '') + (s.date ? ' (' + s.date + ')' : '') + ' <' + s.url + '>\n' + String(s.text || '').slice(0, 1100)).join('\n\n');
   }
   function systemPrompt(o) {
     o = o || {};
     return [CORE_RULES, 'Today is ' + (o.today || new Date().toISOString().slice(0, 10)) + '. Your own knowledge may be older than this.', profileBlock(o.profile), sourcesBlock(o.sources), o.kind === 'chat' ? DEPTH_NOTE.chat : DEPTH_NOTE.fast, o.tone === 'gentle' ? 'Tone: kind and gentle, but never untrue.' : o.tone === 'blunt' ? 'Tone: very blunt and short. Still respectful.' : 'Tone: direct and respectful.'].filter(Boolean).join('\n\n');
   }
 
-  const ROUTER_PROMPT = 'You are a router. Read the conversation and the latest user message. Reply with JSON only, no other text:\n{"kind":"chat|money|health|learn|code|design|decision|other","stakes":"low|medium|high","search":["up to 2 short web search queries, or empty"],"needs_math":true|false,"fresh":true|false,"premise_doubt":"short note if the question rests on a doubtful assumption, else empty"}\n"stakes" = low for harmless everyday things (recipes, trivia, simple how-to), medium for normal advice, high for money, health, legal, safety or big life decisions. "fresh" = true when the answer depends on anything that changes with time: news, current events, prices, weather, sports, laws, opening hours, "latest", "now", "today", recent releases, or anything after 2023. Use "chat" only for greetings, thanks or small talk. Add search queries only when the answer depends on current, specific or checkable facts (prices, laws, news, products, statistics, people, definitions you are unsure of). Queries must be short keyword searches.';
+  const ROUTER_PROMPT = 'You are a router. Read the conversation and the latest user message. Reply with JSON only, no other text:\n{"kind":"chat|money|health|learn|code|design|decision|other","stakes":"low|medium|high","search":["up to 2 short web search queries, or empty"],"needs_math":true|false,"fresh":true|false,"premise_doubt":"short note if the question rests on a doubtful assumption, else empty"}\n"stakes" = low for harmless everyday things (recipes, trivia, simple how-to), medium for normal advice, high for money, health, legal, safety or big life decisions. "fresh" = true when the answer depends on anything that changes with time: news, current events, prices, weather, sports, laws, opening hours, "latest", "now", "today", recent releases, or anything after 2023. Use "chat" only for greetings, thanks or small talk. Add search queries only when the answer depends on current, specific or checkable facts (prices, laws, news, products, statistics, people, definitions you are unsure of). Queries must be short keyword searches. Resolve ambiguous place names from the conversation and the user profile and put the country in the query (for example "Münster Germany", not Munster in Ireland). For follow-up messages, rewrite the queries so they stand alone.';
   const CRITIC_PROMPT = 'You are a hostile but fair reviewer. Review the DRAFT answer to the user\'s question. Look for: facts that contradict the SOURCES or are unsupported; invented numbers, studies or links; arithmetic mistakes (recompute them); missing key risks or base rates; agreeing with a doubtful premise; flattery or false reassurance; vagueness; ignoring something the user said; overconfidence. Reply with JSON only:\n{"verdict":"ok|revise","issues":["specific problem 1","specific problem 2"],"confidence":"low|medium|high"}\nUse "revise" if there is at least one real problem. Do not invent problems; if the draft is sound, use "ok" with an empty list. Do NOT ask for extra caveats, warnings, risks or sources on harmless everyday questions, and do NOT ask for a more formal or longer style: the answer should stay short, friendly and natural. Judge only real errors, invented facts, math mistakes, harmful advice, flattery or ignoring the question.';
   const REVISE_PROMPT = 'Rewrite the DRAFT so that every listed ISSUE is fixed. Keep what was correct. Keep the same short, friendly, natural style and the final "Next:" line if there was one. Do not mention the review or the issues. Do not add facts that are not in the SOURCES or marked as general knowledge.';
 
@@ -197,7 +197,7 @@
     const news = ((nj && nj.results) || []).slice(0, 4).concat(((bj && bj.results) || []).slice(0, 4)).map(x => ({ title: x.title, url: x.url, date: nd(x.date), source: x.source, text: x.text || '' }));
     const web = ((wj && wj.results) || []).slice(0, 4).map(x => ({ title: x.title, url: x.url, date: x.date ? String(x.date).slice(0, 16) : '', source: '', text: x.text || '' }));
     if (o.read !== false) {   // read the top two normal web pages for real content
-      await Promise.all(web.filter(w => !/news\.google\.com/.test(w.url)).slice(0, 2).map(async w => { const j = await get('/read?url=' + enc(w.url)); if (j && j.text && j.text.length > 200) w.text = j.text.slice(0, 1500); }));
+      await Promise.all(web.filter(w => !/news\.google\.com/.test(w.url)).slice(0, 3).map(async w => { const j = await get('/read?url=' + enc(w.url)); if (j && j.text && j.text.length > 200) w.text = j.text.slice(0, 2000); }));
     }
     return news.concat(web);
   }
@@ -239,11 +239,17 @@
   /* broad "what's happening in X" questions: fan out into category searches so results cover events, music, food, news ... */
   const BROAD_RE = /\b(what.?s (happening|going on|on)|happening|going on|things to do|events?|this (weekend|week)|tonight|weekend|was (ist|passiert) los|veranstaltungen|los in)\b/i;
   const CATS = [['Events', 'events this week'], ['Music', 'concerts live music'], ['Food', 'food festival market restaurant opening'], ['Culture', 'exhibition theatre festival'], ['News', 'news today']];
-  function expandQueries(question, routed) {
-    const base = keywords(question).replace(/\b(events?|weekend|week|things|do|going|on|this|los|veranstaltungen)\b/gi, ' ').replace(/\s+/g, ' ').trim();
-    if (!base || !BROAD_RE.test(question)) return (routed || []).map(q => ({ q, cat: '' }));
-    const out = CATS.map(c => ({ q: base + ' ' + c[1], cat: c[0] }));
-    (routed || []).forEach(q => { if (out.length < 6 && !out.some(x => x.q.toLowerCase() === q.toLowerCase())) out.push({ q, cat: '' }); });
+  const CATS_DE = [['Events', 'veranstaltungen diese woche'], ['Music', 'konzerte live musik'], ['Food', 'essen markt festival restaurant neueröffnung'], ['Culture', 'ausstellung theater kultur'], ['News', 'nachrichten heute']];
+  const NOISE_RE = /\b(events?|veranstaltungen|weekend|week|things|do|going|on|this|los|concerts?|music|news|nachrichten|today|heute|tonight|in|mean|i|20\d\d|january|february|march|april|may|june|july|august|september|october|november|december)\b/gi;
+  function expandQueries(question, routed, ctx) {
+    ctx = ctx || {}; routed = routed || [];
+    const text = question + ' ' + routed.join(' ');
+    if (!BROAD_RE.test(text) || WEATHER_RE.test(question)) return routed.map(q => ({ q, cat: '' }));
+    const base = keywords(routed[0] || question).replace(NOISE_RE, ' ').replace(/\s+/g, ' ').trim() || keywords(question).replace(NOISE_RE, ' ').replace(/\s+/g, ' ').trim();
+    if (!base) return routed.map(q => ({ q, cat: '' }));
+    const de = !!ctx.de || /\b(germany|german|deutschland|nrw)\b/i.test(text);
+    const out = (de ? CATS_DE : CATS).map(c => ({ q: base + ' ' + c[1], cat: c[0] }));
+    routed.forEach(q => { if (out.length < 6 && !out.some(x => x.q.toLowerCase() === q.toLowerCase())) out.push({ q, cat: '' }); });
     return out;
   }
   /* real weather numbers: Open-Meteo (free, no key, works from the browser) */
@@ -296,7 +302,7 @@
     {
       step('Understanding the question');
       try {
-        const r = await run([{ role: 'system', content: ROUTER_PROMPT }].concat(history.slice(-4), [{ role: 'user', content: question }]), { temperature: 0, json: true, maxTokens: 300 });
+        const r = await run([{ role: 'system', content: ROUTER_PROMPT + (o.profile ? '\n\n' + profileBlock(o.profile) : '') }].concat(history.slice(-4), [{ role: 'user', content: question }]), { temperature: 0, json: true, maxTokens: 300 });
         const j = parseJSON(r.text); if (j) route = Object.assign(route, { kind: String(j.kind || 'other'), stakes: ['low', 'medium', 'high'].indexOf(j.stakes) !== -1 ? j.stakes : 'medium', search: Array.isArray(j.search) ? j.search.map(String).filter(Boolean).slice(0, 2) : [], needs_math: !!j.needs_math, fresh: j.fresh === true || j.fresh === 'true', premise_doubt: String(j.premise_doubt || '') });
       } catch (e) { if (e.code === 'KEY' || e.code === 'NET' || e.code === 'MODEL') throw e; }
     }
@@ -313,7 +319,7 @@
     const wx = o.web && !chat && !o.nativeSearch && WEATHER_RE.test(question) ? await weatherSource(question, o).catch(() => null) : null;
     if (wx) { diag.push({ query: 'weather data', category: 'Weather', count: 1, error: '' }); }
     if (o.web && !chat && (route.search.length || wx) && !o.nativeSearch) {
-      const plan = fresh ? expandQueries(question, route.search) : route.search.map(q => ({ q, cat: '' }));
+      const plan = fresh ? expandQueries(question, route.search, { de: /germany|deutschland|german/i.test(String(o.profile || '')) || localeOf(o).gl === 'DE' }) : route.search.map(q => ({ q, cat: '' }));
       broad = plan.some(p => p.cat);
       step('Looking things up', plan.map(p => p.q).join(' · '));
       const per = await Promise.all(plan.map(async p => { try { const r = (await o.search(p.q, { fresh })) || []; return { p, r }; } catch (e) { return { p, r: [], err: String(e && e.message || e) }; } }));
@@ -329,7 +335,7 @@
     /* 3. draft */
     step(chat ? 'Replying' : 'Drafting an answer');
     const sys = systemPrompt({ kind: route.kind, profile: o.profile, sources, today: o.today, tone: o.tone });
-    const hint = [wx ? 'The first SOURCE contains real measured weather numbers for the place. Give the temperature, conditions and the next few days from it directly and briefly, with [1]. Do not send the user to other websites.' : '', broad && sources.length ? 'The user asked what is going on somewhere. The SOURCES are tagged by category in brackets (Events, Music, Food, Culture, News). Answer like a friendly local: a short intro, then a few short groups (what is on, music, food, culture, news) with concrete names and dates from the SOURCES, each with [n]. Skip a group if its sources are empty or off-topic. Never invent events or dates. End by offering to narrow down (dates, taste, budget).' : '', fresh && sources.length ?'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live web sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
+    const hint = [wx ? 'The first SOURCE contains real measured weather numbers for the place. Give the temperature, conditions and the next few days from it directly and briefly, with [1]. Do not send the user to other websites.' : '', broad && sources.length ? 'The user asked what is going on somewhere. The SOURCES are tagged by category in brackets (Events, Music, Food, Culture, News). Answer like a friendly local: a short intro, then a few short groups (what is on, music, food, culture, news) with concrete names and dates from the SOURCES, each with [n]. Skip a group if its sources are empty or off-topic. Never invent events or dates. If the sources are mostly headlines, still report the concrete items you can see and say briefly what is missing instead of refusing. End by offering to narrow down (dates, taste, budget).' : '', fresh && sources.length ?'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live web sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
     const draftMsgs = [{ role: 'system', content: sys + (hint ? '\n\n' + hint : '') }].concat(history, [{ role: 'user', content: question }]);
     const d = await run(draftMsgs, { temperature: 0.3, grounding: !!o.nativeSearch && o.web && !chat && (fresh || route.search.length > 0), maxTokens: 1500 });
     let text = d.text;
