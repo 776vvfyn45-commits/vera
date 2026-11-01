@@ -1,5 +1,5 @@
 // Vera service worker v1 — app files network-first; AI and search calls are never cached
-const CACHE_NAME = 'vera-v4';
+const CACHE_NAME = 'vera-v5';
 const APP_SHELL = ['./','./index.html','./vera.js','./manifest.json','./icon-192.png','./icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE_NAME).then(c => Promise.all(APP_SHELL.map(u =>

@@ -51,10 +51,10 @@
   }
   function systemPrompt(o) {
     o = o || {};
-    return [CORE_RULES, 'Today is ' + (o.today || new Date().toISOString().slice(0, 10)) + '. Your own knowledge may be older than this.', profileBlock(o.profile), sourcesBlock(o.sources), o.kind === 'chat' ? DEPTH_NOTE.chat : DEPTH_NOTE.fast, o.tone === 'gentle' ? 'Tone: kind and gentle, but never untrue.' : o.tone === 'blunt' ? 'Tone: very blunt and short. Still respectful.' : 'Tone: direct and respectful.'].filter(Boolean).join('\n\n');
+    return [CORE_RULES, (o.today ? 'Today is ' + o.today : 'Right now it is ' + nowInfo() + ' on the user\'s device') + '. Your own knowledge may be older than this.', profileBlock(o.profile), sourcesBlock(o.sources), o.kind === 'chat' ? DEPTH_NOTE.chat : DEPTH_NOTE.fast, o.tone === 'gentle' ? 'Tone: kind and gentle, but never untrue.' : o.tone === 'blunt' ? 'Tone: very blunt and short. Still respectful.' : 'Tone: direct and respectful.'].filter(Boolean).join('\n\n');
   }
 
-  const ROUTER_PROMPT = 'You are a router. Read the conversation and the latest user message. Reply with JSON only, no other text:\n{"kind":"chat|money|health|learn|code|design|decision|other","stakes":"low|medium|high","search":["up to 2 short web search queries, or empty"],"needs_math":true|false,"fresh":true|false,"premise_doubt":"short note if the question rests on a doubtful assumption, else empty"}\n"stakes" = low for harmless everyday things (recipes, trivia, simple how-to), medium for normal advice, high for money, health, legal, safety or big life decisions. "fresh" = true when the answer depends on anything that changes with time: news, current events, prices, weather, sports, laws, opening hours, "latest", "now", "today", recent releases, or anything after 2023. Use "chat" only for greetings, thanks or small talk. Add search queries only when the answer depends on current, specific or checkable facts (prices, laws, news, products, statistics, people, definitions you are unsure of). Queries must be short keyword searches. Resolve ambiguous place names from the conversation and the user profile and put the country in the query (for example "Münster Germany", not Munster in Ireland). For follow-up messages, rewrite the queries so they stand alone.';
+  const ROUTER_PROMPT = 'You are a router. Read the conversation and the latest user message. Reply with JSON only, no other text:\n{"kind":"chat|money|health|learn|code|design|decision|other","stakes":"low|medium|high","tools":[{"name":"...","args":{}}],"needs_math":true|false,"fresh":true|false,"premise_doubt":"short note if the question rests on a doubtful assumption, else empty"}\nTOOLS (choose none for chat, opinions, writing, coding, or general knowledge that does not change; at most 4 tools):\n- datetime {"timezone":"IANA zone such as Europe/Berlin, or empty"}: current date, time, weekday, day counting, "what day is it".\n- weather {"place":"City, Country"}: real current weather and a 4-day forecast.\n- events {"place":"City, Country","lang":"de or en"}: what is happening in a place: events, concerts, food, culture, local news. Use for "what is happening", "things to do", "what is on".\n- news {"query":"short keywords","lang":"en or de"}: recent news and anything that changes: sports results, politics, companies, releases, current prices.\n- web {"query":"short keywords"}: facts you are unsure of, products, opening hours, how-to details that need checking.\n- read_page {"url":"https://..."}: only when the user pasted a link.\n- calc {"expression":"0.17*2350+40"}: any arithmetic. Write a plain expression with numbers and + - * / ^ ( ) only.\n- convert {"amount":100,"from":"EUR","to":"USD"}: currency conversion at the current rate.\nRules: "stakes" = low for harmless everyday things, medium for normal advice, high for money, health, legal, safety or big life decisions. "fresh" = true when the answer depends on anything that changes with time. Use "chat" only for greetings, thanks or small talk. Resolve ambiguous place names from the conversation and the user profile and always include the country (for example "Münster, Germany", not Munster in Ireland). For follow-up messages, rewrite tool arguments so they stand alone. Use the language of the place for "lang" when it is not English.';
   const CRITIC_PROMPT = 'You are a hostile but fair reviewer. Review the DRAFT answer to the user\'s question. Look for: facts that contradict the SOURCES or are unsupported; invented numbers, studies or links; arithmetic mistakes (recompute them); missing key risks or base rates; agreeing with a doubtful premise; flattery or false reassurance; vagueness; ignoring something the user said; overconfidence. Reply with JSON only:\n{"verdict":"ok|revise","issues":["specific problem 1","specific problem 2"],"confidence":"low|medium|high"}\nUse "revise" if there is at least one real problem. Do not invent problems; if the draft is sound, use "ok" with an empty list. Do NOT ask for extra caveats, warnings, risks or sources on harmless everyday questions, and do NOT ask for a more formal or longer style: the answer should stay short, friendly and natural. Judge only real errors, invented facts, math mistakes, harmful advice, flattery or ignoring the question.';
   const REVISE_PROMPT = 'Rewrite the DRAFT so that every listed ISSUE is fixed. Keep what was correct. Keep the same short, friendly, natural style and the final "Next:" line if there was one. Do not mention the review or the issues. Do not add facts that are not in the SOURCES or marked as general knowledge.';
 
@@ -259,7 +259,12 @@
     o = o || {}; if (!WEATHER_RE.test(question)) return null;
     const f = o.fetch || fetch, m = /\b(?:in|for|at|bei|für|fuer|in)\s+([^?.,!]+?)\s*(?:today|tomorrow|now|this|right|heute|morgen|\?|$)/i.exec(String(question).trim());
     const place = (m ? m[1] : keywords(String(question).replace(WEATHER_RE, ' '))).trim(); if (!place) return null;
-    const words = place.split(/\s+/), tries = [place]; if (words.length > 1) { tries.push(words.slice(0, -1).join(' ')); tries.push(words[0]); }
+    return weatherByPlace(place, o);
+  }
+  async function weatherByPlace(place, o) {
+    o = o || {}; place = String(place || '').replace(/\s+/g, ' ').trim(); if (!place) return null;
+    const f = o.fetch || fetch;
+    const words = place.split(/[\s,]+/).filter(Boolean), tries = [place.replace(/,/g, ' ').replace(/\s+/g, ' ').trim()]; if (words.length > 1) { tries.push(words.slice(0, -1).join(' ')); tries.push(words[0]); }
     let loc = null;
     for (const t of tries) { try { const r = await timed(f, 'https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=' + encodeURIComponent(t), 8000); const j = r.ok && await r.json(); if (j && j.results && j.results[0]) { loc = j.results[0]; break; } } catch (e) {} }
     if (!loc) return null;
@@ -270,6 +275,86 @@
       const text = 'Weather for ' + loc.name + (loc.country ? ', ' + loc.country : '') + ' (measured ' + String(c.time || '').replace('T', ' ') + ' local time): now ' + Math.round(c.temperature_2m) + ' °C, feels like ' + Math.round(c.apparent_temperature) + ' °C, ' + (WCODE[c.weather_code] || 'mixed conditions') + ', wind ' + Math.round(c.wind_speed_10m) + ' km/h, rain now ' + c.precipitation + ' mm. Next days: ' + days + '.';
       return { title: 'Current weather in ' + loc.name, url: 'https://open-meteo.com/en/docs#latitude=' + loc.latitude + '&longitude=' + loc.longitude, source: 'Open-Meteo', date: String(c.time || '').slice(0, 10) || new Date().toISOString().slice(0, 10), text };
     } catch (e) { return null; }
+  }
+
+  /* ================= tools (the model picks them; code runs them) ================= */
+  const TOOL_NAMES = ['datetime', 'weather', 'events', 'news', 'web', 'read_page', 'calc', 'convert'];
+  const OFFLINE_TOOLS = ['datetime', 'calc'];
+  const NATIVE_SKIP = ['events', 'news', 'web', 'read_page'];
+  function nowInfo(tz) {
+    const d = new Date();
+    try { return new Intl.DateTimeFormat('en-GB', { timeZone: tz || undefined, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(d) + (tz ? ' (' + tz + ')' : ''); } catch (e) { return d.toString(); }
+  }
+  function safeCalc(expr) {
+    const s = String(expr || '').replace(/×/g, '*').replace(/÷/g, '/').replace(/\s+/g, '');
+    if (!s || /[^0-9+\-*/^().%]/.test(s)) return null;
+    let i = 0;
+    const num = () => { const m = /^\d*\.?\d+/.exec(s.slice(i)); if (!m) throw 0; i += m[0].length; let v = parseFloat(m[0]); while (s[i] === '%') { v /= 100; i++; } return v; };
+    const prim = () => { if (s[i] === '(') { i++; let v = add(); if (s[i] !== ')') throw 0; i++; while (s[i] === '%') { v /= 100; i++; } return v; } if (s[i] === '-') { i++; return -pow(); } if (s[i] === '+') { i++; return pow(); } return num(); };
+    const pow = () => { const b = prim(); if (s[i] === '^') { i++; return Math.pow(b, pow()); } return b; };
+    const mul = () => { let v = pow(); while (s[i] === '*' || s[i] === '/') { const op = s[i++], r = pow(); v = op === '*' ? v * r : v / r; } return v; };
+    const add = () => { let v = mul(); while (s[i] === '+' || s[i] === '-') { const op = s[i++], r = mul(); v = op === '+' ? v + r : v - r; } return v; };
+    try { const v = add(); if (i !== s.length || !isFinite(v)) return null; return Math.round(v * 1e10) / 1e10; } catch (e) { return null; }
+  }
+  function cleanTools(list) {
+    const yr = new Date().getFullYear(), out = [];
+    (Array.isArray(list) ? list : []).forEach(t => {
+      if (!t || typeof t !== 'object' || TOOL_NAMES.indexOf(t.name) === -1 || out.length >= 4) return;
+      const a = t.args && typeof t.args === 'object' ? Object.assign({}, t.args) : {};
+      ['query', 'place', 'expression', 'url', 'timezone', 'lang', 'from', 'to'].forEach(k => { if (a[k] != null) a[k] = String(a[k]).slice(0, 200); });
+      if (a.query) a.query = a.query.replace(/\b(19\d\d|20\d\d)\b/g, y => (+y < yr ? '' : y)).replace(/\s+/g, ' ').trim();
+      if (t.name === 'weather' && !a.place) return; if (t.name === 'events' && !a.place) return; if ((t.name === 'news' || t.name === 'web') && !a.query) return;
+      if (t.name === 'read_page' && !/^https?:\/\//i.test(a.url || '')) return; if (t.name === 'calc' && !a.expression) return;
+      out.push({ name: t.name, args: a });
+    });
+    return out;
+  }
+  const DATE_RE = /\b(what (day|date|time)|today.?s date|current (date|time)|what.?s the (date|time)|uhrzeit|wie sp[aä]t|welches datum|welcher tag)\b/i;
+  function fallbackTools(q) {   // used only if the router gave no usable tools
+    q = String(q || '');
+    if (DATE_RE.test(q)) return [{ name: 'datetime', args: {} }];
+    if (WEATHER_RE.test(q)) { const m = /\b(?:in|for|at|bei|für|fuer)\s+([^?.,!]+?)\s*(?:today|tomorrow|now|this|right|heute|morgen|\?|$)/i.exec(q.trim()), place = (m ? m[1] : keywords(q.replace(WEATHER_RE, ' '))).trim(); return place ? [{ name: 'weather', args: { place } }] : []; }
+    if (BROAD_RE.test(q)) { const place = keywords(q).replace(NOISE_RE, ' ').replace(/\s+/g, ' ').trim(); return place ? [{ name: 'events', args: { place, lang: /\b(germany|deutschland|german|nrw)\b/i.test(q) ? 'de' : 'en' } }] : []; }
+    if (looksFresh(q)) return [{ name: 'news', args: { query: q.replace(/\s+/g, ' ').slice(0, 90) } }];
+    return [];
+  }
+  function toolLabel(t) { const a = t.args || {}; return t.name === 'datetime' ? 'time' : t.name === 'weather' ? 'weather ' + a.place : t.name === 'events' ? 'events ' + a.place : t.name === 'calc' ? 'math' : t.name === 'convert' ? 'rates' : t.name === 'read_page' ? 'page' : t.name + ' ' + (a.query || ''); }
+  function eventPlan(place, lang) {
+    const de = lang === 'de' || /\b(germany|deutschland|nrw)\b/i.test(place || ''), base = String(place || '').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+    return (de ? CATS_DE : CATS).map(c => ({ q: base + ' ' + c[1], cat: c[0] }));
+  }
+  async function runTool(t, o) {
+    const a = t.args || {}, f = o.fetch || fetch;
+    const one = (label, items, exact) => ({ items, exact: !!exact, diag: [{ query: label, category: label, count: items.length, error: '' }] });
+    const today = new Date().toISOString().slice(0, 10);
+    switch (t.name) {
+      case 'datetime': return one('Time', [{ title: 'Current date and time', url: 'vera:clock', source: 'device clock', date: today, text: 'Current date and time' + (a.timezone ? ' in ' + a.timezone : ' on the user\'s device') + ': ' + nowInfo(a.timezone) + '.' }], true);
+      case 'calc': { const v = safeCalc(a.expression); return one('Math', v == null ? [] : [{ title: 'Calculation', url: 'vera:calc:' + a.expression, source: 'calculator', date: today, text: a.expression + ' = ' + v }], true); }
+      case 'weather': { const w = await weatherByPlace(a.place, o); return one('Weather', w ? [w] : [], true); }
+      case 'convert': {
+        const amt = Number(a.amount) || 1, from = String(a.from || '').toUpperCase(), to = String(a.to || '').toUpperCase();
+        if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to)) return one('Rates', [], true);
+        try { const r = await timed(f, 'https://api.frankfurter.app/latest?amount=' + amt + '&from=' + from + '&to=' + to, 8000), j = r.ok && await r.json();
+          if (j && j.rates && j.rates[to] != null) return one('Rates', [{ title: amt + ' ' + from + ' in ' + to, url: 'https://www.frankfurter.app/#' + from + to + amt, source: 'European Central Bank rate', date: j.date || today, text: amt + ' ' + from + ' = ' + j.rates[to] + ' ' + to + ' (European Central Bank reference rate of ' + (j.date || today) + '; real bank or card rates differ by fees).' }], true);
+        } catch (e) {}
+        return one('Rates', [], true);
+      }
+      case 'events': {
+        const plan = eventPlan(a.place, a.lang), res = await Promise.all(plan.map(async p => { try { return { p, r: (await o.search(p.q, { fresh: true })) || [] }; } catch (e) { return { p, r: [], err: String(e && e.message || e) }; } }));
+        const items = []; res.forEach(x => x.r.forEach(s => items.push(Object.assign({}, s, { title: '[' + x.p.cat + '] ' + s.title }))));
+        return { items, exact: false, broad: true, diag: res.map(x => ({ query: x.p.q, category: x.p.cat, count: x.r.length, error: x.err || '' })) };
+      }
+      case 'news': case 'web': {
+        const r = (await o.search(a.query, { fresh: t.name === 'news' })) || [], label = (t.name === 'news' ? 'News' : 'Web') + ': ' + String(a.query).slice(0, 28);
+        return one(label, r, false);
+      }
+      case 'read_page': { const r = o.read ? await o.read(a.url) : null; return one('Page', r && r.text ? [{ title: r.title || a.url, url: a.url, source: '', date: today, text: String(r.text).slice(0, 4000) }] : [], false); }
+    }
+    return one(t.name, [], false);
+  }
+  async function readPage(url, o) {
+    o = o || {}; if (!o.worker) return null; const f = o.fetch || fetch;
+    try { const r = await timed(f, String(o.worker).replace(/\/+$/, '') + '/read?url=' + encodeURIComponent(url), 12000); return r.ok ? await r.json() : null; } catch (e) { return null; }
   }
   async function webSearch(q, o) { // Tavily (if a key is set) first, Wikipedia as the free fallback
     o = o || {}; let out = [];
@@ -286,7 +371,7 @@
   function dedupeBalanced(list, limit) {   // keep a few from every category so one topic cannot crowd out the rest
     const groups = {}; list.forEach(s => { const m = /^\[([^\]]+)\]/.exec(s.title || ''), k = m ? m[1] : '-'; (groups[k] = groups[k] || []).push(s); });
     const keys = Object.keys(groups), mixed = []; for (let i = 0; mixed.length < list.length && i < 20; i++) keys.forEach(k => { if (groups[k][i]) mixed.push(groups[k][i]); });
-    return dedupeSources(mixed, limit);
+    return mixed;
   }
 
   /* ask(): llm(messages,{temperature,json,grounding}) -> {text,sources};  search(q) -> [{title,url,text}] */
@@ -297,49 +382,45 @@
     const run = async (messages, opts) => { calls++; return llm(messages, opts); };
     if (!question) throw new VeraError('EMPTY', 'Type a question first.');
 
-    /* 1. route */
-    let route = { kind: 'other', stakes: 'medium', search: [], needs_math: false, fresh: false, premise_doubt: '' };
+    /* 1. route: the model picks tools */
+    let route = { kind: 'other', stakes: 'medium', tools: [], needs_math: false, fresh: false, premise_doubt: '' };
     {
       step('Understanding the question');
       try {
-        const r = await run([{ role: 'system', content: ROUTER_PROMPT + (o.profile ? '\n\n' + profileBlock(o.profile) : '') }].concat(history.slice(-4), [{ role: 'user', content: question }]), { temperature: 0, json: true, maxTokens: 300 });
-        const j = parseJSON(r.text); if (j) route = Object.assign(route, { kind: String(j.kind || 'other'), stakes: ['low', 'medium', 'high'].indexOf(j.stakes) !== -1 ? j.stakes : 'medium', search: Array.isArray(j.search) ? j.search.map(String).filter(Boolean).slice(0, 2) : [], needs_math: !!j.needs_math, fresh: j.fresh === true || j.fresh === 'true', premise_doubt: String(j.premise_doubt || '') });
+        const r = await run([{ role: 'system', content: ROUTER_PROMPT + (o.profile ? '\n\n' + profileBlock(o.profile) : '') + '\n\nCurrent device time: ' + nowInfo() }].concat(history.slice(-4), [{ role: 'user', content: question }]), { temperature: 0, json: true, maxTokens: 500 });
+        const j = parseJSON(r.text);
+        if (j) route = Object.assign(route, { kind: String(j.kind || 'other'), stakes: ['low', 'medium', 'high'].indexOf(j.stakes) !== -1 ? j.stakes : 'medium', tools: cleanTools(j.tools || (Array.isArray(j.search) ? j.search.map(q => ({ name: 'web', args: { query: String(q) } })) : [])), needs_math: !!j.needs_math, fresh: j.fresh === true || j.fresh === 'true', premise_doubt: String(j.premise_doubt || '') });
       } catch (e) { if (e.code === 'KEY' || e.code === 'NET' || e.code === 'MODEL') throw e; }
     }
     const chat = route.kind === 'chat';
-    const fresh = !chat && (route.fresh || looksFresh(question));
-    if (fresh && !route.search.length) route.search = [question.replace(/\s+/g, ' ').slice(0, 90)];
-    const liveOk = !!o.live;   // a live search backend is connected (worker, Tavily or Gemini search)
+    if (!chat && !route.tools.length) route.tools = cleanTools(fallbackTools(question));
+    const fresh = !chat && (route.fresh || looksFresh(question) || route.tools.some(t => ['weather', 'events', 'news', 'datetime', 'convert'].indexOf(t.name) !== -1));
 
-    /* 2. look things up */
-    let sources = [], grounded = [];
-    let diag = [], broad = false;
-    const yr = new Date().getFullYear();   // old years in search queries bring old pages
-    if (fresh) route.search = route.search.map(q => q.replace(/\b(19\d\d|20\d\d)\b/g, y => (+y < yr ? '' : y)).replace(/\s+/g, ' ').trim()).filter(Boolean);
-    const wx = o.web && !chat && !o.nativeSearch && WEATHER_RE.test(question) ? await weatherSource(question, o).catch(() => null) : null;
-    if (wx) { diag.push({ query: 'weather data', category: 'Weather', count: 1, error: '' }); }
-    if (o.web && !chat && (route.search.length || wx) && !o.nativeSearch) {
-      const plan = fresh ? expandQueries(question, route.search, { de: /germany|deutschland|german/i.test(String(o.profile || '')) || localeOf(o).gl === 'DE' }) : route.search.map(q => ({ q, cat: '' }));
-      broad = plan.some(p => p.cat);
-      step('Looking things up', plan.map(p => p.q).join(' · '));
-      const per = await Promise.all(plan.map(async p => { try { const r = (await o.search(p.q, { fresh })) || []; return { p, r }; } catch (e) { return { p, r: [], err: String(e && e.message || e) }; } }));
-      const found = wx ? [wx] : [];
-      per.forEach(x => { diag.push({ query: x.p.q, category: x.p.cat, count: x.r.length, error: x.err || '' }); x.r.forEach(s => found.push(x.p.cat ? Object.assign({}, s, { title: '[' + x.p.cat + '] ' + s.title }) : s)); });
-      if (fresh) found.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
-      sources = broad ? dedupeBalanced(found, 14) : dedupeSources(found, fresh ? 8 : 5);
-      if (wx && !sources.some(s => s.url === wx.url)) sources = dedupeSources([wx].concat(sources), 8);
+    /* 2. run the tools */
+    let sources = [], diag = [], broad = false, exactItems = [];
+    if (!chat && route.tools.length) {
+      const todo = route.tools.filter(t => (o.web || OFFLINE_TOOLS.indexOf(t.name) !== -1) && !(o.nativeSearch && NATIVE_SKIP.indexOf(t.name) !== -1));
+      if (todo.length) {
+        step('Looking things up', todo.map(toolLabel).join(' · '));
+        const done = await Promise.all(todo.map(t => runTool(t, o).catch(e => ({ items: [], exact: false, diag: [{ query: toolLabel(t), category: toolLabel(t), count: 0, error: String(e && e.message || e) }] }))));
+        let others = [];
+        done.forEach(d => { diag = diag.concat(d.diag || []); if (d.broad && d.items.length) broad = true; if (d.exact) exactItems = exactItems.concat(d.items); else others = others.concat(d.items); });
+        if (fresh) others.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        sources = dedupeSources(exactItems.concat(broad ? dedupeBalanced(others) : others), broad ? 15 : 8);
+      }
     }
-    const noLive = fresh && (!o.web || (!o.nativeSearch && !sources.length) || (!liveOk && !sources.length));
+    const hasExact = exactItems.length > 0;
+    const noLive = fresh && !sources.length && !(o.nativeSearch && o.web);
     if (noLive) step('No live information available');
 
     /* 3. draft */
     step(chat ? 'Replying' : 'Drafting an answer');
     const sys = systemPrompt({ kind: route.kind, profile: o.profile, sources, today: o.today, tone: o.tone });
-    const hint = [wx ? 'The first SOURCE contains real measured weather numbers for the place. Give the temperature, conditions and the next few days from it directly and briefly, with [1]. Do not send the user to other websites.' : '', broad && sources.length ? 'The user asked what is going on somewhere. The SOURCES are tagged by category in brackets (Events, Music, Food, Culture, News). Answer like a friendly local: a short intro, then a few short groups (what is on, music, food, culture, news) with concrete names and dates from the SOURCES, each with [n]. Skip a group if its sources are empty or off-topic. Never invent events or dates. If the sources are mostly headlines, still report the concrete items you can see and say briefly what is missing instead of refusing. End by offering to narrow down (dates, taste, budget).' : '', fresh && sources.length ?'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live web sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
+    const hint = [hasExact ? 'Some SOURCES are exact data (device clock, calculator, Open-Meteo weather, exchange rates). Use their numbers directly and briefly with [n]. Do not send the user to other websites or apps for something these sources already answer. For time questions give the date and time plainly.' : '', broad && sources.length ? 'The user asked what is going on somewhere. The SOURCES are tagged by category in brackets (Events, Music, Food, Culture, News). Answer like a friendly local: a short intro, then a few short groups (what is on, music, food, culture, news) with concrete names and dates from the SOURCES, each with [n]. Skip a group if its sources are empty or off-topic. Never invent events or dates. If the sources are mostly headlines, still report the concrete items you can see and say briefly what is missing instead of refusing. End by offering to narrow down (dates, taste, budget).' : '', fresh && sources.length ?'The user asks about current information. Use ONLY the SOURCES for anything recent; mention dates when they matter; if the sources are thin or conflict, say what you could and could not confirm. Never say your knowledge ends in a particular year when sources are provided.' : '', noLive ? 'IMPORTANT: The user wants current information but no live sources are available right now (' + (o.web ? 'live search is not connected or returned nothing' : 'online lookup is switched off') + '). Say so clearly in one friendly sentence, say that anything you know from memory may be out of date, and do not state recent facts as certain. Give only well-established background.' : '', route.premise_doubt ? 'Note: the question may rest on a doubtful assumption: ' + route.premise_doubt : '', route.needs_math ? 'There is arithmetic involved: show and re-check the calculation.' : ''].filter(Boolean).join('\n');
     const draftMsgs = [{ role: 'system', content: sys + (hint ? '\n\n' + hint : '') }].concat(history, [{ role: 'user', content: question }]);
-    const d = await run(draftMsgs, { temperature: 0.3, grounding: !!o.nativeSearch && o.web && !chat && (fresh || route.search.length > 0), maxTokens: 1500 });
+    const d = await run(draftMsgs, { temperature: 0.3, grounding: !!o.nativeSearch && o.web && !chat && (fresh || route.tools.length > 0), maxTokens: 1500 });
     let text = d.text;
-    if (d.sources && d.sources.length) sources = dedupeSources(d.sources.map(s => ({ title: s.title, url: s.url, text: '' })), 8);
+    if (d.sources && d.sources.length) sources = dedupeSources(exactItems.concat(d.sources.map(s => ({ title: s.title, url: s.url, text: '' }))), 10);
     if (!text) throw new VeraError('EMPTY', 'The model returned an empty answer. Try again or pick another model.');
 
     /* 4. attack the draft, then repair it */
@@ -382,5 +463,5 @@
     return { pass: okMust && okNot, missing: test.must.filter(re => !re.test(a)).map(String), violated: test.mustNot.filter(re => re.test(a)).map(String) };
   }
 
-  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, freeNews, expandQueries, weatherSource, parseRss, keywords, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
+  return { VeraError, CORE_RULES, systemPrompt, ROUTER_PROMPT, CRITIC_PROMPT, PROVIDERS, pickModel, createLLM, listModels, wikiSearch, webSearch, ask, parseJSON, workerSearch, freeNews, expandQueries, weatherSource, weatherByPlace, safeCalc, nowInfo, runTool, cleanTools, fallbackTools, readPage, parseRss, keywords, looksFresh, trimHistory, sanitizeAnswer, splitFollowups, dedupeSources, REALITY_TESTS, gradeTest };
 });

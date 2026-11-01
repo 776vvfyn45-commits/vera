@@ -234,6 +234,7 @@ async function send(text) {
   try {
     const r = await Vera.ask({ llm, question: text, history, mode: st.mode, web: st.web, nativeSearch: st.provider === 'gemini', live: hasLive(), tone: st.tone, profile: st.profile, locale: navigator.language,
       search: (q, o) => Vera.webSearch(q, { tavilyKey: st.tavily, worker: st.worker, fresh: !o || o.fresh !== false, locale: navigator.language }),
+      read: u => Vera.readPage(u, { worker: st.worker }),
       onStep: (n, d) => { stepText = /Looking/.test(n) ? 'Looking that up…' : /Check|Second|Fix/.test(n) ? 'Double-checking…' : /Draft|Reply/.test(n) ? 'Writing…' : 'Thinking…'; const e = $('#stepTxt'); if (e) e.textContent = stepText; } });
     c.msgs.push({ role: 'assistant', content: r.text, meta: { steps: r.steps, issues: r.issues, sources: r.sources, calls: r.calls, usedSearch: r.usedSearch, diag: r.diag, followups: r.followups, kind: r.kind, fresh: r.fresh, noLive: r.noLive } });
     typing = { i: c.msgs.length - 1, shown: '' }; busy = false; save(); render(); typeIn(c.msgs.length - 1, r.text);
