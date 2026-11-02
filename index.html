@@ -6,7 +6,7 @@
 <title>Melodize — Voice to full song studio</title>
 <meta name="description" content="Hum, sing or beatbox and turn your voice into piano, guitar, strings, synths, EDM leads and drums. Layer tracks, mix, master and export a full song. Installable on Windows, Android and iPhone.">
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#0c0d14">
+<meta name="theme-color" content="#0a0e16">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -17,22 +17,22 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0c0d14; --bg2:#13141f; --panel:#181a26; --panel2:#1f2233;
-    --line:rgba(255,255,255,.08); --text:#eef0ff; --sub:#9195b5;
-    --accent:#8b5cf6; --accent2:#ec4899; --accent3:#22d3ee;
+    --bg:#0a0e16; --bg2:#0f1521; --panel:#131a28; --panel2:#1a2335;
+    --line:rgba(255,255,255,.08); --text:#e8eef9; --sub:#8a97b2;
+    --accent:#2dd4bf; --accent2:#38bdf8; --accent3:#22d3ee;
     --good:#34d399; --warn:#fbbf24; --bad:#f87171;
   }
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:'Inter',sans-serif;background:
-      radial-gradient(1200px 600px at 15% -10%, rgba(139,92,246,.18), transparent 60%),
-      radial-gradient(1000px 500px at 100% 0%, rgba(236,72,153,.14), transparent 55%),
+      radial-gradient(1200px 600px at 15% -10%, rgba(45,212,191,.18), transparent 60%),
+      radial-gradient(1000px 500px at 100% 0%, rgba(56,189,248,.14), transparent 55%),
       var(--bg);color:var(--text);min-height:100vh}
   h1,h2,h3,.logo{font-family:'Space Grotesk',sans-serif}
   .wrap{max-width:1020px;margin:0 auto;padding:28px 20px 80px}
 
   header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:14px}
   .logo{display:flex;align-items:center;gap:10px;font-size:1.5rem;font-weight:700}
-  .logo .dot{width:11px;height:11px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 16px rgba(139,92,246,.7)}
+  .logo .dot{width:11px;height:11px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 16px rgba(45,212,191,.7)}
   .logo .sub{font-size:.78rem;color:var(--sub);font-weight:400;margin-left:4px}
   .status-pill{font-size:.72rem;padding:5px 11px;border-radius:30px;border:1px solid var(--line);color:var(--sub);background:rgba(255,255,255,.03)}
   .status-pill.ready{color:var(--good);border-color:rgba(52,211,153,.35)}
@@ -45,10 +45,10 @@
 
   .btn{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:12px;border:1px solid var(--line);
     background:var(--panel2);color:var(--text);font-family:inherit;font-size:.9rem;font-weight:600;cursor:pointer;transition:.15s}
-  .btn:hover{border-color:rgba(139,92,246,.5);transform:translateY(-1px)}
+  .btn:hover{border-color:rgba(45,212,191,.5);transform:translateY(-1px)}
   .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
   .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none}
-  .btn.primary:hover{box-shadow:0 8px 20px rgba(139,92,246,.4)}
+  .btn.primary:hover{box-shadow:0 8px 20px rgba(45,212,191,.4)}
   .btn.danger{border-color:rgba(248,113,113,.4);color:#ffb4b4}
   .btn.ghost{background:transparent}
   .btn.small{padding:7px 13px;font-size:.78rem;border-radius:9px}
@@ -71,19 +71,19 @@
   /* mode tabs */
   .tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
   .tab{padding:9px 16px;border-radius:30px;border:1px solid var(--line);background:transparent;color:var(--sub);font-family:inherit;font-weight:600;font-size:.82rem;cursor:pointer}
-  .tab.active{background:rgba(139,92,246,.16);border-color:var(--accent);color:var(--text)}
+  .tab.active{background:rgba(45,212,191,.16);border-color:var(--accent);color:var(--text)}
 
   .inst-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:9px;margin-bottom:16px}
   .inst-card{background:var(--panel2);border:1.5px solid var(--line);border-radius:13px;padding:12px 6px;text-align:center;cursor:pointer;transition:.15s;user-select:none}
   .inst-card .emoji{font-size:1.5rem;display:block;margin-bottom:4px}
   .inst-card .name{font-size:.74rem;font-weight:600}
-  .inst-card:hover{border-color:rgba(139,92,246,.4)}
-  .inst-card.active{border-color:var(--accent);background:rgba(139,92,246,.14);box-shadow:0 0 0 1px rgba(139,92,246,.4) inset}
+  .inst-card:hover{border-color:rgba(45,212,191,.4)}
+  .inst-card.active{border-color:var(--accent);background:rgba(45,212,191,.14);box-shadow:0 0 0 1px rgba(45,212,191,.4) inset}
   .inst-card.synth.active{border-color:var(--accent3);background:rgba(34,211,238,.1);box-shadow:0 0 0 1px rgba(34,211,238,.4) inset}
 
   .preset-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px;margin:10px 0 4px}
   .preset{background:var(--panel2);border:1.5px solid var(--line);border-radius:13px;padding:12px;cursor:pointer;text-align:left;color:var(--text);font-family:inherit}
-  .preset:hover{border-color:rgba(236,72,153,.5)}
+  .preset:hover{border-color:rgba(56,189,248,.5)}
   .preset b{display:block;font-size:.82rem;margin-bottom:3px}
   .preset span{font-size:.72rem;color:var(--sub)}
 
@@ -117,7 +117,7 @@
   .mini{display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--sub)}
   .mini input[type=range]{width:74px}
 
-  .toggle.on.fills{background:rgba(236,72,153,.16);border-color:rgba(236,72,153,.5);color:#ff9ccf}
+  .toggle.on.fills{background:rgba(56,189,248,.16);border-color:rgba(56,189,248,.5);color:#ff9ccf}
   select.kitpick{max-width:150px;font-size:.74rem;padding:5px 7px}
   .drumgrid{margin-top:10px;overflow-x:auto;padding-bottom:4px}
   .dg-row{display:flex;align-items:center;gap:6px;margin-bottom:3px}
@@ -126,14 +126,14 @@
   .cell{width:22px;height:22px;border-radius:5px;border:1px solid var(--line);background:rgba(255,255,255,.035);cursor:pointer;padding:0}
   .cell.beat{background:rgba(255,255,255,.08)}
   .cell.bar{margin-left:6px}
-  .cell.on{background:var(--c,#ec4899);border-color:transparent;box-shadow:0 0 8px var(--c,#ec4899)}
+  .cell.on{background:var(--c,#38bdf8);border-color:transparent;box-shadow:0 0 8px var(--c,#38bdf8)}
 
   .adv-q{font-size:.8rem;color:var(--text);font-weight:600;margin-top:6px}
   .chips{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 14px}
   .transport select{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-family:inherit;font-size:.78rem}
   .chip{padding:7px 13px;border-radius:30px;border:1px solid var(--line);background:transparent;color:var(--sub);font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer}
-  .chip:hover{border-color:rgba(139,92,246,.5)}
-  .chip.active{background:rgba(139,92,246,.18);border-color:var(--accent);color:var(--text)}
+  .chip:hover{border-color:rgba(45,212,191,.5)}
+  .chip.active{background:rgba(45,212,191,.18);border-color:var(--accent);color:var(--text)}
   .adv-card{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:13px;border-radius:14px;background:var(--panel2);border:1px solid var(--line);margin-bottom:9px}
   .adv-card.best{border-color:rgba(52,211,153,.5);box-shadow:0 0 0 1px rgba(52,211,153,.25) inset}
   .adv-card .ai{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;background:rgba(255,255,255,.05)}
@@ -144,7 +144,7 @@
   .pctbar > div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
   .adv-btns{display:flex;flex-direction:column;gap:6px}
   /* chat page */
-  .chatpage{position:fixed;inset:0;z-index:40;background:radial-gradient(900px 500px at 10% -10%, rgba(139,92,246,.2), transparent 60%),var(--bg);display:flex;flex-direction:column;height:100dvh}
+  .chatpage{position:fixed;inset:0;z-index:40;background:radial-gradient(900px 500px at 10% -10%, rgba(45,212,191,.2), transparent 60%),var(--bg);display:flex;flex-direction:column;height:100dvh}
   .chat-inner{width:100%;max-width:820px;margin:0 auto;display:flex;flex-direction:column;flex:1;min-height:0;padding:0 14px}
   .chat-head{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
   .chat-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.05rem;flex:1}
@@ -196,6 +196,29 @@
   .gate h1{font-size:1.6rem;margin-bottom:10px}
   .gate p{color:var(--sub);font-size:.92rem;margin-bottom:22px;line-height:1.6}
   .tip{background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.2);border-radius:10px;padding:10px 12px;font-size:.78rem;color:#b8f3ff;margin-bottom:14px;line-height:1.5}
+
+  /* ---- Nova studio polish ---- */
+  body{font-family:'Inter',system-ui,sans-serif;letter-spacing:.005em;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px}
+  .panel{border-radius:16px;border:1px solid rgba(255,255,255,.06);box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 18px 40px rgba(0,0,0,.28)}
+  .panel h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.14em;color:#9fb0cf;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .panel h2:before{content:"";width:6px;height:6px;border-radius:2px;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 10px rgba(45,212,191,.6)}
+  .btn{border-radius:11px;font-weight:600;letter-spacing:.01em}
+  .btn.primary{color:#04121a;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 6px 18px rgba(45,212,191,.22)}
+  .btn.primary:hover{box-shadow:0 10px 26px rgba(45,212,191,.38)}
+  .btn:focus-visible,.tab:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .tab{border-radius:10px;padding:9px 15px}
+  .tab.active{background:linear-gradient(180deg,rgba(45,212,191,.18),rgba(56,189,248,.08));box-shadow:0 0 0 1px rgba(45,212,191,.55) inset}
+  .logo{gap:12px;letter-spacing:.01em}
+  .logo svg{width:34px;height:34px;flex:none;filter:drop-shadow(0 0 10px rgba(45,212,191,.45))}
+  .logo .sub{display:block;margin:0;font-size:.7rem;letter-spacing:.12em;text-transform:uppercase}
+  .logo .nm{display:flex;flex-direction:column;line-height:1.1}
+  .track{border-radius:14px;transition:border-color .2s,box-shadow .2s}
+  .track:hover{border-color:rgba(45,212,191,.3)}
+  .btn.nova{background:linear-gradient(135deg,rgba(45,212,191,.16),rgba(56,189,248,.16));border-color:rgba(45,212,191,.45)}
+  .nova-orb{display:inline-block;width:10px;height:10px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,var(--accent) 40%,var(--accent2));box-shadow:0 0 12px var(--accent)}
+  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#243049;border-radius:8px}::-webkit-scrollbar-track{background:transparent}
+  @media (max-width:640px){.wrap{padding:18px 12px 70px}.panel{padding:16px;border-radius:14px}.btn{padding:10px 14px}}
 </style>
 </head>
 <body>
@@ -212,7 +235,7 @@
   <div class="chat-inner">
     <div class="chat-head">
       <button class="btn small ghost" id="chatBack">← Back to studio</button>
-      <div class="chat-title">🤖 Melodize Advisor<small id="chatSub">Talk, type, or sing — I'll help you pick instruments and build beats.</small></div>
+      <div class="chat-title"><span class="nova-orb"></span> Nova<small id="chatSub">Talk, type, or sing — I'll help you pick instruments and build beats.</small></div>
       <label class="chk"><input type="checkbox" id="chatSpeak"> 🔊 Speak replies</label>
       <button class="btn small" id="chatVoice" title="Hands-free conversation: talk, sing, talk again">🗣 Voice chat</button>
       <button class="btn small" id="chatCfg" title="Connect a real AI (optional)">⚙ AI: built-in</button>
@@ -265,9 +288,9 @@
 
 <div class="wrap">
   <header>
-    <div class="logo"><span class="dot"></span>Melodize <span class="sub">voice → full song studio</span></div>
+    <div class="logo"><svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#38bdf8"/></linearGradient></defs><rect x="2" y="2" width="44" height="44" rx="12" fill="#0f1521" stroke="url(#lg)" stroke-width="2"/><g fill="url(#lg)"><rect x="10" y="20" width="4" height="8" rx="2"/><rect x="17" y="13" width="4" height="22" rx="2"/><rect x="24" y="17" width="4" height="14" rx="2"/><rect x="31" y="10" width="4" height="28" rx="2"/><rect x="38" y="21" width="3" height="6" rx="1.5"/></g></svg><span class="nm">Melodize <span class="sub">voice → full song studio</span></span></div>
     <div style="display:flex;align-items:center;gap:10px">
-      <button class="btn small" id="openChat">💬 Advisor chat</button>
+      <button class="btn small nova" id="openChat"><span class="nova-orb"></span> Talk to Nova</button>
       <button class="btn small" id="installBtn" style="display:none">⬇ Install app</button>
       <span class="status-pill" id="statusPill">starting…</span>
     </div>
@@ -326,7 +349,7 @@
       <button class="tab" data-mode="beatbox">🥁 Beatbox → drums</button>
       <button class="tab" data-mode="drums">🎛 Drum machine</button>
       <button class="tab" data-mode="vocal">🎙 Real voice</button>
-      <button class="tab" data-mode="advisor">🤖 Ask the advisor</button>
+      <button class="tab" data-mode="advisor">✦ Ask Nova</button>
     </div>
 
     <div id="melodySection">
@@ -554,7 +577,7 @@ function createInstrument(key) {
 ===================================================================== */
 const VOICES = ['kick','snare','clap','hat','openhat','tom','perc','ride','crash'];
 const VOICE_LABEL = { kick:'Kick', snare:'Snare', clap:'Clap', hat:'Hat', openhat:'Open', tom:'Tom', perc:'Perc', ride:'Ride', crash:'Crash' };
-const VOICE_COLOR = { kick:'#ec4899', snare:'#8b5cf6', clap:'#a78bfa', hat:'#22d3ee', openhat:'#34d399', tom:'#fbbf24', perc:'#f472b6', ride:'#60a5fa', crash:'#fb923c' };
+const VOICE_COLOR = { kick:'#38bdf8', snare:'#2dd4bf', clap:'#a78bfa', hat:'#22d3ee', openhat:'#34d399', tom:'#fbbf24', perc:'#f472b6', ride:'#60a5fa', crash:'#fb923c' };
 const OR = "https://oramics.github.io/sampled/";
 const KITS = {
   // synthesized (instant, no download)
@@ -697,7 +720,7 @@ const PRESETS = [
 const S = { bpm:120, bars:8, keyRoot:'auto', scale:'auto', grid:4, mode:'melody', instrument:'piano', kit:'club', swing:0, humanize:true };
 let masterGain, compressor, limiter, eq, recorder, reverbBus, reverbIn, widener, delayBus;
 let tracks = [], trackIdCounter = 0;
-const trackColors = ['#8b5cf6','#ec4899','#22d3ee','#34d399','#fbbf24','#f472b6','#60a5fa','#fb923c'];
+const trackColors = ['#2dd4bf','#38bdf8','#22d3ee','#34d399','#fbbf24','#f472b6','#60a5fa','#fb923c'];
 const spb = () => 60 / S.bpm;
 const songLen = () => S.bars * 4 * spb();
 
@@ -951,7 +974,7 @@ function drawMeter(level) {
   const ctx = meterCanvas.getContext('2d'), w = meterCanvas.width, h = meterCanvas.height;
   ctx.fillStyle = '#0a0b12'; ctx.fillRect(0,0,w,h);
   const grad = ctx.createLinearGradient(0,0,w,0);
-  grad.addColorStop(0, '#8b5cf6'); grad.addColorStop(1, '#ec4899');
+  grad.addColorStop(0, '#2dd4bf'); grad.addColorStop(1, '#38bdf8');
   ctx.fillStyle = grad; ctx.fillRect(0, h*0.25, Math.min(w * level * 3, w), h*0.5);
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1808,7 +1831,7 @@ async function respond(text) {
   if (r.yes && !want && !r.question && text.split(/\s+/).length <= 3) { say(pick(['Glad you like it! ', 'Nice. ']) + 'What shall we do next?', { chips: suggestNext() }); return; }
   if (r.no && !want) { say(pick(["Okay — I'm here when you need me.", 'No worries. Tell me whatever comes to mind.']), { chips: suggestNext() }); return; }
   if (r.bye) { say("Bye for now! Your tracks stay in the studio — come back anytime. 🎶"); return; }
-  if (r.who) { say("I'm the Melodize advisor — a helper built into this studio. I listen to your tune, suggest instruments, make beats and build songs. Tell me what you're in the mood for!", { chips: suggestNext() }); return; }
+  if (r.who) { say("I'm Nova, the AI built into Melodize — a helper built into this studio. I listen to your tune, suggest instruments, make beats and build songs. Tell me what you're in the mood for!", { chips: suggestNext() }); return; }
   if (r.how && !want) { say(pick(["Doing great and ready to make music! What are we creating?", "Feeling musical! Want to sing me something?"]), { chips: suggestNext() }); return; }
   if (r.sorry && !want) { say(pick(["No need to apologise — nothing's broken. What next?", 'All good! Want to try again?']), { chips: suggestNext() }); return; }
   if (r.bored || r.whatNext) { say(pick(["Here's an idea — ", "Let's get you going: "]) + (tracks.length ? 'we have ' + tracks.length + ' track' + (tracks.length > 1 ? 's' : '') + ' so far, so ' : '') + 'pick one of these.', { chips: suggestNext() }); return; }
@@ -2192,7 +2215,7 @@ function liveUI(state, extra) {
 }
 function liveMeter() {
   const cv = $('#lvMeter'); if (!cv) return; const c = cv.getContext('2d'); c.clearRect(0, 0, 110, 14);
-  c.fillStyle = live.state === 'sing' ? '#ec4899' : '#22d3ee'; c.fillRect(0, 3, Math.min(110, live.level * 700), 8);
+  c.fillStyle = live.state === 'sing' ? '#38bdf8' : '#22d3ee'; c.fillRect(0, 3, Math.min(110, live.level * 700), 8);
 }
 const concatF32 = parts => { let n = 0; parts.forEach(c => { n += c.length; }); const o = new Float32Array(n); let k = 0; parts.forEach(c => { o.set(c, k); k += c.length; }); return o; };
 async function startLive() {
@@ -2355,7 +2378,7 @@ function openChat() {
   if (!chat.started) {
     chat.started = true;
     const tsum = tasteSummary();
-    say("Hi! I'm your Melodize advisor. 🎶 Sing or hum a tune and I'll find the right instrument, build chords and a band around it, or answer you with a phrase of my own. You can also just describe a feeling — “rainy night in Tokyo” — and I'll compose it. You can type, tap 🎙 to talk, or tap 🎤 to sing." + (tsum ? "\nI remember you like " + tsum + "." : '') + " What would you like to do?", { chips: STARTER().concat([{ label: '🌧 Rainy night in Tokyo', say: 'make something that feels like a rainy night in tokyo' }]), speech: "Hi! I'm your Melodize advisor. Sing me a tune, or tell me what you'd like to make." });
+    say("Hi, I'm Nova. 🎶 Sing or hum a tune and I'll find the right instrument, build chords and a band around it, or answer you with a phrase of my own. You can also just describe a feeling — “rainy night in Tokyo” — and I'll compose it. You can type, tap 🎙 to talk, or tap 🎤 to sing." + (tsum ? "\nI remember you like " + tsum + "." : '') + " What would you like to do?", { chips: STARTER().concat([{ label: '🌧 Rainy night in Tokyo', say: 'make something that feels like a rainy night in tokyo' }]), speech: "Hi, I'm Nova. Sing me a tune, or tell me what you'd like to make." });
   }
   if (chat.voiceOn && !live.on) startLive();
   setTimeout(() => { try { $('#chatText').focus(); } catch (e) {} }, 50);
