@@ -136,7 +136,8 @@ let busy = false, stepText = '', typing = null;
 const P = () => Vera.PROVIDERS[S.settings.provider];
 const key = () => S.settings.keys[S.settings.provider] || '';
 const base = () => (S.settings.bases[S.settings.provider] || '').trim();
-const mkLLM = () => Vera.createLLM({ provider: S.settings.provider, key: key(), model: S.settings.models[S.settings.provider], base: base() || undefined });
+const mkLLM = model => Vera.createLLM({ provider: S.settings.provider, key: key(), model: model || S.settings.models[S.settings.provider], base: base() || undefined });
+const strongModel = () => (S.settings.strong || {})[S.settings.provider] || '';
 const conv = () => S.convs.find(c => c.id === S.active);
 const hasLive = () => !!(S.settings.worker || S.settings.tavily || S.settings.provider === 'gemini');
 const ready = () => (!P().needsKey || !!key()) && (!P().needsBase || !!base());
@@ -177,8 +178,8 @@ function turnHtml(m, i, last) {
     if (x.noLive) h += '<div class="small dim" style="margin-top:8px">ℹ️ I could not check live information' + (hasLive() ? '' : ' (live search is not connected)') + ', so recent facts here may be out of date. ' + (hasLive() ? '' : '<a href="#" data-act="settings">Set up live search</a> (free, 5 minutes, makes it much more reliable).') + '</div>';
     if (x.diag && x.diag.length) h += '<div class="small dim" style="margin-top:6px">Searched: ' + x.diag.map(d => esc((d.category || d.query)) + ' ' + (d.count ? d.count + ' ✓' : '0')).join(' · ') + '</div>';
     h += '<div class="acts"><button class="mini" data-act="copy" data-i="' + i + '">Copy</button>' + (last ? '<button class="mini" data-act="regen">↻ Redo</button>' : '') + '</div>';
-    if (x.usedSearch || (x.issues && x.issues.length)) {
-      h += '<details class="how"><summary>' + (x.usedSearch ? (x.fresh ? '🔎 Checked live on the web' : '🔎 I checked this online') : '✓ I double-checked this') + (x.issues && x.issues.length ? ' and fixed ' + x.issues.length + ' thing' + (x.issues.length > 1 ? 's' : '') : '') + '</summary><div class="in">' +
+    if (x.usedSearch || x.analysis || (x.issues && x.issues.length)) {
+      h += '<details class="how"><summary>' + (x.usedSearch ? (x.fresh ? '🔎 Checked live on the web' : '🔎 I checked this online') : (x.analysis ? '🧠 I worked this through step by step' : '✓ I double-checked this')) + (x.issues && x.issues.length ? ' and fixed ' + x.issues.length + ' thing' + (x.issues.length > 1 ? 's' : '') : '') + '</summary><div class="in">' +
         (x.sources && x.sources.length ? x.sources.map(s => '<a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">[' + s.n + '] ' + esc(s.title) + '</a>').join('') : '') +
         (x.issues && x.issues.length ? '<div style="margin-top:6px">Fixed in my first draft:<br>• ' + x.issues.map(esc).join('<br>• ') + '</div>' : '') + '</div></details>';
     }
@@ -230,13 +231,13 @@ async function send(text) {
   const history = c.msgs.filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
   c.msgs.push({ role: 'user', content: text }); if (c.title === 'New chat') c.title = text.slice(0, 44);
   $('#q').value = ''; autosize(); busy = true; stepText = 'Thinking…'; save(); render();
-  const st = S.settings, llm = mkLLM();
+  const st = S.settings, llm = mkLLM(), sm = strongModel(), llmStrong = sm && sm !== st.models[st.provider] ? mkLLM(sm) : null;
   try {
-    const r = await Vera.ask({ llm, question: text, history, mode: st.mode, web: st.web, nativeSearch: st.provider === 'gemini', live: hasLive(), tone: st.tone, profile: st.profile, locale: navigator.language,
+    const r = await Vera.ask({ llm, llmStrong, question: text, history, mode: st.mode, web: st.web, nativeSearch: st.provider === 'gemini', live: hasLive(), tone: st.tone, profile: st.profile, locale: navigator.language,
       search: (q, o) => Vera.webSearch(q, { tavilyKey: st.tavily, worker: st.worker, fresh: !o || o.fresh !== false, locale: navigator.language }),
       read: u => Vera.readPage(u, { worker: st.worker }),
-      onStep: (n, d) => { stepText = /Looking/.test(n) ? 'Looking that up…' : /Check|Second|Fix/.test(n) ? 'Double-checking…' : /Draft|Reply/.test(n) ? 'Writing…' : 'Thinking…'; const e = $('#stepTxt'); if (e) e.textContent = stepText; } });
-    c.msgs.push({ role: 'assistant', content: r.text, meta: { steps: r.steps, issues: r.issues, sources: r.sources, calls: r.calls, usedSearch: r.usedSearch, diag: r.diag, followups: r.followups, kind: r.kind, fresh: r.fresh, noLive: r.noLive } });
+      onStep: (n, d) => { stepText = /Looking/.test(n) ? 'Looking that up…' : /Working|Cross/.test(n) ? 'Thinking it through…' : /Check|Second|Fix/.test(n) ? 'Double-checking…' : /Draft|Reply/.test(n) ? 'Writing…' : 'Thinking…'; const e = $('#stepTxt'); if (e) e.textContent = stepText; } });
+    c.msgs.push({ role: 'assistant', content: r.text, meta: { steps: r.steps, issues: r.issues, sources: r.sources, calls: r.calls, usedSearch: r.usedSearch, analysis: r.analysis, diag: r.diag, followups: r.followups, kind: r.kind, fresh: r.fresh, noLive: r.noLive } });
     typing = { i: c.msgs.length - 1, shown: '' }; busy = false; save(); render(); typeIn(c.msgs.length - 1, r.text);
   } catch (e) {
     c.msgs.push({ role: 'assistant', error: true, content: friendly(e.code, e.message) }); busy = false; save(); render();
@@ -265,18 +266,19 @@ function openSettings() {
   if (p.needsKey) h += '<label class="l">API key <a href="' + p.keyUrl + '" target="_blank" rel="noopener noreferrer" class="small">(get a free key)</a></label><input type="password" id="sKey" value="' + esc(key()) + '" autocomplete="off" placeholder="paste key here">' + (st.provider === 'gemini' && !key() && hasFEKey() ? '<button class="btn sm" style="margin-top:8px" data-act="feKey">Use the Gemini key saved in FE</button>' : '');
   else h += '<div class="note">Install Ollama from <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">ollama.com</a>, run a model (for example <b>ollama pull qwen3:8b</b>), then start Ollama with <b>OLLAMA_ORIGINS=https://776vvfyn45-commits.github.io</b>. PC browser only.</div>';
   h += '<label class="l">Model</label><div class="row"><select id="sModel">' + (models.length ? models.map(m => '<option' + (st.models[st.provider] === m ? ' selected' : '') + '>' + esc(m) + '</option>').join('') : '<option value="">(tap Load list)</option>') + '</select><button class="btn" data-act="loadModels">Load list</button></div>';
+  h += '<label class="l">Stronger model for hard questions (optional)</label><select id="sStrong"><option value="">Same as above</option>' + models.map(m => '<option' + (strongModel() === m ? ' selected' : '') + '>' + esc(m) + '</option>').join('') + '</select><div class="dim small" style="margin-top:4px">Used for analysis and double-checking. Pick your most capable model; leave it if unsure.</div>';
   h += '<button class="btn pri block" style="margin-top:14px" data-act="saveConn">Save & test</button>';
   h += '<h2>Live web search (real-time news)</h2><div class="dim small">Without this, Vera only knows what it learned before about 2024. Free setup in about 5 minutes: follow <b>LIVE_SEARCH_SETUP.md</b>, then paste your Worker address here.</div><label class="l">Your Worker address</label><input type="text" id="sWorker" value="' + esc(st.worker) + '" placeholder="https://vera-web.yourname.workers.dev" autocomplete="off" autocapitalize="off"><div class="row" style="margin-top:10px"><button class="btn" data-act="saveWorker">Save</button><button class="btn" data-act="testWorker">Test live search</button></div><div id="wkOut" class="small" style="margin-top:8px"></div>' + (st.provider === 'gemini' ? '<div class="dim small" style="margin-top:8px">You are using Gemini, which can also search Google on its own.</div>' : '');
   h += '<h2>You</h2><label class="l" style="margin-top:0">Your name</label><input type="text" id="sName" value="' + esc(st.name) + '" autocomplete="off"><label class="l">About you (so answers fit your life)</label><textarea id="sProf" class="sheetta" rows="4" placeholder="Example: I live in Germany. Small budget (about €100). Beginner investor. I train 4×/week. I build small web apps.">' + esc(st.profile) + '</textarea>';
   h += '<h2>Style</h2><div class="row"><div style="flex:1"><label class="l" style="margin-top:0">Tone</label><select id="sTone">' + [['gentle', 'Gentle'], ['direct', 'Direct'], ['blunt', 'Blunt and short']].map(t => '<option value="' + t[0] + '"' + (st.tone === t[0] ? ' selected' : '') + '>' + t[1] + '</option>').join('') + '</select></div><div style="flex:1"><label class="l" style="margin-top:0">Theme</label><select id="sTheme"><option value="dark"' + (st.theme !== 'light' ? ' selected' : '') + '>Dark</option><option value="light"' + (st.theme === 'light' ? ' selected' : '') + '>Light</option></select></div></div>';
   h += '<div class="dim small" style="margin-top:10px">⚡ Quick = fastest. 🧠 Smart = double-checks anything important (default). 🔬 Thorough = checks everything twice. More checking uses more of your free daily limit.</div>';
   h += '<label class="l">Optional: Tavily search key (better web results)</label><input type="password" id="sTav" value="' + esc(st.tavily) + '" autocomplete="off" placeholder="tvly-…"><button class="btn block" style="margin-top:12px" data-act="saveAll">Save these settings</button>';
-  h += '<h2>Honesty test</h2><div class="dim small">Asks ' + Vera.REALITY_TESTS.length + ' trick questions (fake promises, flattery bait, false facts, math) and grades the answers.</div><button class="btn block" style="margin-top:8px" data-act="runTests">Run honesty test</button><div id="testOut"></div>';
+  h += '<h2>Honesty & reasoning test</h2><div class="dim small">Asks ' + Vera.REALITY_TESTS.length + ' trick questions (fake promises, flattery bait, false facts, logic puzzles, math, decisions) and grades the answers. Uses a lot of your free daily limit, so run it once in a while.</div><button class="btn block" style="margin-top:8px" data-act="runTests">Run the test</button><div id="testOut"></div>';
   h += '<h2>Your data</h2><div class="dim small">Chats and keys stay only on this device.</div><div class="row" style="margin-top:8px"><button class="btn" data-act="export">Download backup</button><button class="btn danger" data-act="wipe">Erase all</button></div>';
   sheet(h);
 }
 function hasFEKey() { try { const j = JSON.parse(localStorage.getItem('fe_state_v1')); return !!(j && j.gemKey); } catch (e) { return false; } }
-function readConn() { const st = S.settings; st.provider = $('#sProv').value; if ($('#sKey')) st.keys[st.provider] = $('#sKey').value.trim(); if ($('#sBase')) st.bases[st.provider] = $('#sBase').value.trim().replace(/\/+$/, ''); const m = $('#sModel').value; if (m) st.models[st.provider] = m; }
+function readConn() { const st = S.settings; st.provider = $('#sProv').value; if ($('#sKey')) st.keys[st.provider] = $('#sKey').value.trim(); if ($('#sBase')) st.bases[st.provider] = $('#sBase').value.trim().replace(/\/+$/, ''); const m = $('#sModel').value; if (m) st.models[st.provider] = m; if ($('#sStrong')) { st.strong = st.strong || {}; st.strong[st.provider] = $('#sStrong').value; } }
 function readAll() { const st = S.settings; readConn(); st.tone = $('#sTone').value; st.theme = $('#sTheme').value; st.tavily = $('#sTav').value.trim(); if ($('#sWorker')) st.worker = $('#sWorker').value.trim().replace(/\/+$/, ''); st.name = $('#sName').value.trim(); st.profile = $('#sProf').value; applyTheme(); }
 async function runTests() {
   const out = $('#testOut'); if (!ready() || !S.settings.models[S.settings.provider]) { toast('Connect a model first.'); return; }
